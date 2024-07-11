@@ -31,54 +31,56 @@ func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID string
 	if author != "" {
 		args = append(args, "--author", author)
 	}
-	_, _, err := d.execCommand(ctx, args, nil)
-	return err
+	err := d.execCommand(ctx, args, nil)
+	return fmt.Errorf("commit failed: %w", err)
 }
 
 func (d *dockerCompatibleRuntime) ImageExists(ctx context.Context, image string) bool {
-	_, _, err := d.execCommand(ctx, []string{"image", "inspect", image}, nil)
+	err := d.execCommand(ctx, []string{"image", "inspect", image}, nil)
 	return err == nil
 }
 
 func (d *dockerCompatibleRuntime) Pull(ctx context.Context, image string, auth *Auth, args ...string) error {
-	_, _, err := d.withLoginContextCommands(ctx, auth, append([]string{"pull", image}, args...), nil)
-	return err
+	return d.withLoginContextCommands(ctx, auth, append([]string{"pull", image}, args...), nil)
 }
 
 func (d *dockerCompatibleRuntime) Push(ctx context.Context, image string, auth *Auth) error {
-	_, _, err := d.withLoginContextCommands(ctx, auth, []string{"push", image}, nil)
-	return err
+	return d.withLoginContextCommands(ctx, auth, []string{"push", image}, nil)
 }
 
-func (d *dockerCompatibleRuntime) withLoginContextCommands(ctx context.Context, auth *Auth, args []string, stdin io.Reader) (string, string, error) {
+func (d *dockerCompatibleRuntime) withLoginContextCommands(ctx context.Context, auth *Auth, args []string, stdin io.Reader) error {
 	if auth == nil {
-		return d.execCommand(ctx, args, stdin)
+		err := d.execCommand(ctx, args, stdin)
+		return err
 	}
 	tmp, err := os.MkdirTemp("", ".docker-config-*")
 	if err != nil {
-		return "", "", err
+		return err
 	}
 	defer os.RemoveAll(tmp)
 	os.Setenv("DOCKER_CONFIG", tmp)
 	defer os.Unsetenv("DOCKER_CONFIG")
-	os.WriteFile(tmp+"/config.json", []byte(auth.ConfigJSON), 0600)
+	if err := os.WriteFile(tmp+"/config.json", []byte(auth.ConfigJSON), 0o600); err != nil {
+		return err
+	}
 	err = d.requireLogin(ctx, auth)
 	if err != nil {
-		return "", "", err
+		return err
 	}
-	return d.execCommand(ctx, args, stdin)
+	err = d.execCommand(ctx, args, stdin)
+	return fmt.Errorf("encounter error after login: %w", err)
 }
 
 func (d *dockerCompatibleRuntime) requireLogin(ctx context.Context, auth *Auth) error {
 	if auth == nil {
 		return nil
 	}
-	_, _, err := d.execCommand(ctx, []string{"login", auth.Registry}, nil)
-	return err
+	err := d.execCommand(ctx, []string{"login", auth.Registry}, nil)
+	return fmt.Errorf("login failed for: %w", err)
 }
 
-func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string, stdin io.Reader) (string, string, error) {
-	c := exec.CommandContext(ctx, d.dockerCompatibleCommand, append(d.globalArgs[:], args...)...)
+func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string, stdin io.Reader) error {
+	c := exec.CommandContext(ctx, d.dockerCompatibleCommand, append(d.globalArgs, args...)...)
 	out := bytes.NewBuffer(nil)
 	errOut := bytes.NewBuffer(nil)
 	c.Stdin = stdin
@@ -86,5 +88,5 @@ func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string
 	c.Stderr = errOut
 	err := c.Run()
 	klog.Infof("execCommand: %s %v, out: %s, errOut: %s, err: %v", d.dockerCompatibleCommand, args, out.String(), errOut.String(), err)
-	return out.String(), errOut.String(), err
+	return err
 }

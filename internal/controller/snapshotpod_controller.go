@@ -29,12 +29,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	snapshotpodv1alpha1 "baizeai.io/snapshot-pod/api/v1alpha1"
 	"github.com/containers/image/v5/docker"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 )
 
 const (
@@ -94,7 +95,7 @@ func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshot
 	if err != nil {
 		return err
 	}
-	var containers = lo.Map(pod.Spec.Containers, func(item corev1.Container, index int) string {
+	containers := lo.Map(pod.Spec.Containers, func(item corev1.Container, index int) string {
 		return item.Name
 	})
 	if len(sp.Spec.Target.Containers) != 0 {
@@ -183,7 +184,7 @@ func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *sn
 		spt, ok := sptMap[s.TaskName]
 		if !ok {
 			sp.Status.Snapshots[i].Result = snapshotpodv1alpha1.SnapshotRunningResultCreated
-			sp.Status.Snapshots[i].FailedReason = fmt.Sprintf("can not fetch task")
+			sp.Status.Snapshots[i].FailedReason = "can not fetch task"
 			continue
 		}
 		switch spt.Status.Phase {
@@ -227,9 +228,10 @@ func renderNewImageName(originImage string, format string) (string, error) {
 	domain := reference.Domain(r)
 	p := reference.Path(r)
 	tag := ""
-	if v, ok := r.(reference.NamedTagged); ok {
+	switch v := r.(type) {
+	case reference.NamedTagged:
 		tag = v.Tag()
-	} else if v, ok := r.(reference.Canonical); ok {
+	case reference.Canonical:
 		tag = v.Digest().Hex()
 	}
 	lr, _ := lo.Last(strings.Split(p, "/"))

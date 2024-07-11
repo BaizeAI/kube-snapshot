@@ -8,7 +8,7 @@ image:
   repository: aiharbor.daocloud.io/baize/snapshot-pod-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: ""
+  tag: "latest"
 
 imagePullSecrets: []
 nameOverride: ""

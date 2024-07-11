@@ -6,7 +6,7 @@ domain: baizeai.io
 layout:
 - go.kubebuilder.io/v4
 projectName: snapshot-pod
-repo: baizeai.io/snapshot-pod
+repo: github.com/baizeai/kube-snapshot
 resources:
 - api:
     crdVersion: v1
@@ -15,7 +15,7 @@ resources:
   domain: baizeai.io
   group: snapshot-pod
   kind: SnapshotPod
-  path: baizeai.io/snapshot-pod/api/v1alpha1
+  path: github.com/baizeai/kube-snapshot/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -24,6 +24,6 @@ resources:
   domain: baizeai.io
   group: snapshot-pod
   kind: SnapshotPodTask
-  path: baizeai.io/snapshot-pod/api/v1alpha1
+  path: github.com/baizeai/kube-snapshot/api/v1alpha1
   version: v1alpha1
 version: "3"

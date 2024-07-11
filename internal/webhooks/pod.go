@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 
-	snapshotpodv1alpha1 "baizeai.io/snapshot-pod/api/v1alpha1"
 	"github.com/samber/lo"
 	"gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -19,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 )
 
 type PodImageWebhookAdmission struct {
@@ -51,7 +52,7 @@ func (p *PodImageWebhookAdmission) Handle(ctx context.Context, request admission
 	case admissionv1.Delete:
 		round, _ := p.handlePodUpdate(ctx, request.Namespace, request.Name)
 		if round != 0 {
-			klog.Infof("trigger new round %d for pod deleteing %s/%s", round, request.Namespace, request.Name)
+			klog.Infof("trigger new round %d for pod deleting %s/%s", round, request.Namespace, request.Name)
 		}
 		return admission.Allowed(fmt.Sprintf("new round: %d", round))
 	case admissionv1.Create:

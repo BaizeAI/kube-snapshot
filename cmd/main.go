@@ -23,16 +23,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"baizeai.io/snapshot-pod/internal/webhooks"
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/baizeai/kube-snapshot/internal/webhooks"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	snapshotpodv1alpha1 "baizeai.io/snapshot-pod/api/v1alpha1"
-	"baizeai.io/snapshot-pod/internal/controller"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -41,6 +40,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
+	"github.com/baizeai/kube-snapshot/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -140,7 +142,7 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			err = os.WriteFile(filepath.Join(h, ".docker", "config.json"), bs, 0644)
+			err = os.WriteFile(filepath.Join(h, ".docker", "config.json"), bs, 0o644)
 			if err != nil {
 				panic(err)
 			}

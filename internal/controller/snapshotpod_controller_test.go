@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	snapshotpodv1alpha1 "baizeai.io/snapshot-pod/api/v1alpha1"
+	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 )
 
 var _ = Describe("SnapshotPod Controller", func() {

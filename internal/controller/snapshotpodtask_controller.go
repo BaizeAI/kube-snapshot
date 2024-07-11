@@ -28,13 +28,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	criruntime "baizeai.io/snapshot-pod/internal/controller/runtime"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	snapshotpodv1alpha1 "baizeai.io/snapshot-pod/api/v1alpha1"
+	criruntime "github.com/baizeai/kube-snapshot/internal/controller/runtime"
+
+	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 )
 
 const (
@@ -199,18 +200,20 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			spt.Status.Conditions[i].LastTransitionTime = metav1.Now()
 		}
 	}
-	if lo.EveryBy(spt.Status.Conditions, func(item metav1.Condition) bool {
+	switch {
+	case lo.EveryBy(spt.Status.Conditions, func(item metav1.Condition) bool {
 		return item.Status == metav1.ConditionTrue
-	}) {
+	}):
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted
-	} else if lo.SomeBy(spt.Status.Conditions, func(item metav1.Condition) bool {
+	case lo.SomeBy(spt.Status.Conditions, func(item metav1.Condition) bool {
 		// check timeout
 		return item.Status != metav1.ConditionTrue && item.LastTransitionTime.Add(time.Minute*10).Before(time.Now())
-	}) {
+	}):
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed
-	} else {
+	default:
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCreated
 	}
+
 	if err := r.Status().Update(ctx, &spt); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -227,7 +230,7 @@ func (r *SnapshotPodTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		dockerRuntime:     criruntime.NewDockerCompatibleRuntime("docker", "--debug"),
 		containerdRuntime: criruntime.NewDockerCompatibleRuntime("nerdctl", "--debug", "-n", "k8s.io"),
 		// for kind
-		//containerdRuntime: criruntime.NewDockerCompatibleRuntime("docker", "exec", "-i", "kind-control-plane", "nerdctl", "-n", "k8s.io"),
+		// containerdRuntime: criruntime.NewDockerCompatibleRuntime("docker", "exec", "-i", "kind-control-plane", "nerdctl", "-n", "k8s.io"),
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&snapshotpodv1alpha1.SnapshotPodTask{}).

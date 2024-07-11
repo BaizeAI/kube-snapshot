@@ -1,4 +1,4 @@
-module baizeai.io/snapshot-pod
+module github.com/baizeai/kube-snapshot
 
 go 1.22.0
 

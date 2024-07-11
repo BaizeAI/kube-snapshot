@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "snapshot-pod.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "snapshot-pod.fullname" . }}
+rules:
+  - apiGroups:
+      - "snapshot-pod.baizeai.io"
+    resources:
+      - "*"
+    verbs:
+      - "*"
+  - apiGroups:
+      - ""
+    resources:
+      - "pods"
+      - "secrets"
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - "admissionregistration.k8s.io"
+    resources:
+      - "mutatingwebhookconfigurations"
+    verbs:
+      - "*"

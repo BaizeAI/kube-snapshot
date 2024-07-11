@@ -1,0 +1,18 @@
+apiVersion: snapshot-pod.baizeai.io/v1alpha1
+kind: SnapshotPod
+metadata:
+  labels:
+    app.kubernetes.io/name: snapshot-pod
+    app.kubernetes.io/managed-by: kustomize
+  name: snapshotpod-sample
+spec:
+  target:
+    name: test
+  triggerRound: 1
+  commitOptions:
+    pauseContainer: false
+    timeout: 3m
+    message: auto save
+  imageSaveOptions:
+    imageRefFormat: aiharbor.daocloud.io/kebe-test/{last_repository}
+#    registrySecretRef: aiharbor-secret

@@ -1,0 +1,27 @@
+# permissions for end users to edit snapshotpods.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: snapshot-pod
+    app.kubernetes.io/managed-by: kustomize
+  name: snapshotpod-editor-role
+rules:
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpods/status
+  verbs:
+  - get

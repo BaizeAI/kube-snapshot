@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "snapshot-pod.fullname" . }}-runner
+  labels:
+    {{- include "snapshot-pod.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "snapshot-pod.fullname" . }}-runner
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: {{ include "snapshot-pod.fullname" . }}-runner
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "snapshot-pod.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: host-run
+          hostPath:
+            path: /var/run/
+            type: ''
+        {{ if .Values.systemWideDockerSecret }}
+        - name: docker-registry-secret
+          secret:
+            secretName: {{ .Values.systemWideDockerSecret }}
+        {{ end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --leader-elect=false
+            {{ if .Values.systemWideDockerSecret }}
+            - --system-wide-docker-config-path=/root/.docker/system-wide/config.json
+            {{ end }}
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          volumeMounts:
+            - name: host-run
+              mountPath: /var/run/
+            {{ if .Values.systemWideDockerSecret }}
+            - name: docker-registry-secret
+              mountPath: /root/.docker/system-wide/config.json
+              subPath: .dockerconfigjson
+            {{ end }}
+          env:
+            - name: SNAP_TASK_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

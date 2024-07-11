@@ -1,0 +1,58 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpods/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpods/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpodtasks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpodtasks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - snapshot-pod.baizeai.io
+  resources:
+  - snapshotpodtasks/status
+  verbs:
+  - get
+  - patch
+  - update

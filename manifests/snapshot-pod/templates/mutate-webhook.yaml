@@ -1,0 +1,19 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "snapshot-pod.fullname" . }}
+webhooks:
+  - name: webhook-service.default.svc
+    clientConfig:
+      service:
+        name: {{ include "snapshot-pod.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: "/mutate-v1-pod"
+    rules:
+      - operations: ["CREATE", "DELETE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    admissionReviewVersions: ["v1"]
+    failurePolicy: Ignore
+    sideEffects: None

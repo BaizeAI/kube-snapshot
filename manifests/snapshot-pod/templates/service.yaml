@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name:  {{ include "snapshot-pod.fullname" . }}-webhook
+  labels:
+    {{- include "snapshot-pod.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 9443
+  selector:
+    {{- include "snapshot-pod.selectorLabels" . | nindent 4 }}

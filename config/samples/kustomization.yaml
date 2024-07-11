@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- snapshot-pod_v1alpha1_snapshotpod.yaml
+- snapshot-pod_v1alpha1_snapshotpodtask.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

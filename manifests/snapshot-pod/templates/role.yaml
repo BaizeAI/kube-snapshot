@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "snapshot-pod.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "snapshot-pod.fullname" . }}
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - "*"
+  - apiGroups:
+      - ""
+    resources:
+      - "secrets"
+      - "events"
+    verbs:
+      - "*"

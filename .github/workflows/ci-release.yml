@@ -119,7 +119,7 @@ jobs:
           git config --global user.name "baize.ai[bot]"
           git clone https://x-access-token:${{ steps.get_app_token.outputs.token }}@github.com/BaizeAI/charts.git baize-charts
           helm package $HELM_CHARTS_DIR --destination ./baize-charts/docs/
-          helm repo index --url https://BaizeAI.github.io/charts ./baize-charts/docs/
+          helm repo index --url https://baizeai.github.io/charts ./baize-charts/docs/
           cd baize-charts/
           git add docs/
           chart_version=${{ steps.get_version.outputs.VERSION }}

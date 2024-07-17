@@ -77,12 +77,22 @@ func (p *PodImageWebhookAdmission) Handle(ctx context.Context, request admission
 					if ic.pullSecret != "" && !lo.Contains(pod.Spec.ImagePullSecrets, corev1.LocalObjectReference{
 						Name: ic.pullSecret,
 					}) {
-						// need append secret
-						patchOps = append(patchOps, jsonpatch.JsonPatchOperation{
-							Operation: "add",
-							Path:      "/spec/imagePullSecrets/-",
-							Value:     corev1.LocalObjectReference{Name: ic.pullSecret},
-						})
+						// as issue https://github.com/kubernetes/kubernetes/issues/70281 mentioned
+						// json patch distinguish nil and empty array.
+						if len(pod.Spec.ImagePullSecrets) == 0 {
+							patchOps = append(patchOps, jsonpatch.JsonPatchOperation{
+								Operation: "add",
+								Path:      "/spec/imagePullSecrets",
+								Value:     []corev1.LocalObjectReference{{Name: ic.pullSecret}},
+							})
+						} else {
+							// need append secret
+							patchOps = append(patchOps, jsonpatch.JsonPatchOperation{
+								Operation: "add",
+								Path:      "/spec/imagePullSecrets/-",
+								Value:     corev1.LocalObjectReference{Name: ic.pullSecret},
+							})
+						}
 					}
 				}
 			}
@@ -125,7 +135,8 @@ func (p *PodImageWebhookAdmission) handlePodCreate(ctx context.Context, pod *cor
 	if err != nil {
 		return nil, false
 	}
-	// todo more than one sp?
+	// TODO(@kebe): more than one sp?
+	// find all snapshot pods and match the container images.
 	sp, ok := lo.Find(snapPodList.Items, func(item snapshotpodv1alpha1.SnapshotPod) bool {
 		return item.Spec.Target.Name == pod.Name
 	})

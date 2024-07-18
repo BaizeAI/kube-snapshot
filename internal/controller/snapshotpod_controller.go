@@ -219,7 +219,7 @@ func withRandomTag(tag string) string {
 	return fmt.Sprintf("%s-%s", tag, gen())
 }
 
-func renderNewImageName(originImage string, format string) (string, error) {
+func renderNewImageName(originImage, format string) (string, error) {
 	ref, err := docker.ParseReference("//" + originImage)
 	if err != nil {
 		return "", err

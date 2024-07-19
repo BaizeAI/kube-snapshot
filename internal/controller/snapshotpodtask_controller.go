@@ -43,6 +43,8 @@ const (
 	containerdRuntime = "containerd"
 )
 
+var defaultCommitTimeout = "5m"
+
 // SnapshotPodTaskReconciler reconciles a SnapshotPodTask object
 type SnapshotPodTaskReconciler struct {
 	client.Client
@@ -61,7 +63,7 @@ func (r *SnapshotPodTaskReconciler) getRuntimeAndContainerID(containerID string)
 	return rtName, rt, cid, nil
 }
 
-func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, namespace string, sec string, image string) (*criruntime.Auth, error) {
+func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, namespace, sec, image string) (*criruntime.Auth, error) {
 	if sec == "" {
 		return nil, nil
 	}
@@ -110,7 +112,11 @@ func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *sn
 	if err != nil {
 		return err
 	}
-	d, err := time.ParseDuration(spt.Spec.CommitOptions.Timeout)
+	timeout := defaultCommitTimeout
+	if len(spt.Spec.CommitOptions.Timeout) > 0 {
+		timeout = spt.Spec.CommitOptions.Timeout
+	}
+	d, err := time.ParseDuration(timeout)
 	if err != nil {
 		return err
 	}

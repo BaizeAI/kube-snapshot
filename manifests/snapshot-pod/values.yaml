@@ -2,10 +2,15 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+global:
+  ## @param global.imageRegistry Global image registry
+  imageRegistry: ""
+
 replicaCount: 1
 
 image:
-  repository: aiharbor.daocloud.io/baize/snapshot-pod-controller
+  registry: ghcr.io
+  repository: baizeai/snapshot-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: "latest"

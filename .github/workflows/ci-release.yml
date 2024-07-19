@@ -64,7 +64,7 @@ jobs:
           images: |
             ghcr.io/baizeai/snapshot-controller
           tags: |
-            type=semver,pattern={{version}}
+            type=semver,pattern={{raw}}
 
       - name: Build
         uses: docker/build-push-action@v4
@@ -102,7 +102,7 @@ jobs:
 
       - name: Tag helm chart image
         run: |
-          image_tag=${{ steps.get_version.outputs.VERSION }}
+          image_tag=v${{ steps.get_version.outputs.VERSION }}
           chart_version=${{ steps.get_version.outputs.VERSION }}
           sed -i "s/latest/${image_tag}/g" $HELM_CHARTS_DIR/values.yaml
           chart_smever=${chart_version#"v"}

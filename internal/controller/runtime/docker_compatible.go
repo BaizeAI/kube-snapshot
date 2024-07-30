@@ -31,8 +31,10 @@ func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID, image
 	if author != "" {
 		args = append(args, "--author", author)
 	}
-	err := d.execCommand(ctx, args, nil)
-	return fmt.Errorf("commit failed: %w", err)
+	if err := d.execCommand(ctx, args, nil); err != nil {
+		return fmt.Errorf("commit image: %s", err)
+	}
+	return nil
 }
 
 func (d *dockerCompatibleRuntime) ImageExists(ctx context.Context, image string) bool {
@@ -67,16 +69,20 @@ func (d *dockerCompatibleRuntime) withLoginContextCommands(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	err = d.execCommand(ctx, args, stdin)
-	return fmt.Errorf("encounter error after login: %w", err)
+	if err = d.execCommand(ctx, args, stdin); err != nil {
+		return fmt.Errorf("after login: %s", err)
+	}
+	return nil
 }
 
 func (d *dockerCompatibleRuntime) requireLogin(ctx context.Context, auth *Auth) error {
 	if auth == nil {
 		return nil
 	}
-	err := d.execCommand(ctx, []string{"login", auth.Registry}, nil)
-	return fmt.Errorf("login failed for: %w", err)
+	if err := d.execCommand(ctx, []string{"login", auth.Registry}, nil); err != nil {
+		return fmt.Errorf("login '%s': %s", auth.Registry, err)
+	}
+	return nil
 }
 
 func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string, stdin io.Reader) error {

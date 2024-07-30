@@ -45,7 +45,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: TLS_SECRET_NAME
               value: {{ include "snapshot-pod.fullname" . }}-tls
-            - name: MUTATE_WEBHOOK_NAME
+            # keep same with MutatingWebhookConfiguration name
+            - name: MUTATE_WEBHOOK_NAME 
+              value: {{ include "snapshot-pod.fullname" . }}
+            - name: MUTATE_WEBHOOK_SVC_NAME
               value: {{ include "snapshot-pod.fullname" . }}-webhook
           ports:
             - name: health

@@ -102,7 +102,7 @@ jobs:
 
       - name: Tag helm chart image
         run: |
-          image_tag=v${{ steps.get_version.outputs.VERSION }}
+          image_tag=${{ steps.get_version.outputs.VERSION }}
           chart_version=${{ steps.get_version.outputs.VERSION }}
           sed -i "s/latest/${image_tag}/g" $HELM_CHARTS_DIR/values.yaml
           chart_smever=${chart_version#"v"}
@@ -123,5 +123,6 @@ jobs:
           cd baize-charts/
           git add docs/
           chart_version=${{ steps.get_version.outputs.VERSION }}
-          git commit -m "update kube-snapshot chart ${chart_version}"
+          chart_smever=${chart_version#"v"}
+          git commit -m "update kube-snapshot chart ${chart_smever}"
           git push https://x-access-token:${{ steps.get_app_token.outputs.token }}@github.com/BaizeAI/charts.git

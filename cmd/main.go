@@ -184,12 +184,12 @@ func main() {
 				CAName:                "Webhook",
 				CAOrganization:        "SnapshotPod",
 				DNSName: fmt.Sprintf("%s.%s.svc", func() string {
-					return os.Getenv("MUTATE_WEBHOOK_NAME")
+					return os.Getenv("MUTATE_WEBHOOK_SVC_NAME")
 				}(), ns),
 				IsReady: ready,
 				Webhooks: []rotator.WebhookInfo{
 					{
-						Name: "snapshot-pod",
+						Name: os.Getenv("MUTATE_WEBHOOK_NAME"),
 						Type: rotator.Mutating,
 					},
 				},

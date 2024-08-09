@@ -50,9 +50,21 @@ func (p *PodImageWebhookAdmission) Handle(ctx context.Context, request admission
 	}
 	switch request.Operation {
 	case admissionv1.Delete:
-		round, _ := p.handlePodUpdate(ctx, request.Namespace, request.Name)
+		pod := &corev1.Pod{}
+		err := json.Unmarshal(request.OldObject.Raw, pod)
+		if err != nil {
+			return admission.Errored(500, err)
+		}
+
+		// avoid handling multiple pod deletion events. when pod deleted, webhook will send 3 times events, first event no delete timestamp.
+		// see https://www.qinglite.cn/doc/527564767afc0aac0.
+		if !pod.DeletionTimestamp.IsZero() {
+			return admission.Allowed("already handled")
+		}
+
+		round, _ := p.handlePodUpdate(ctx, pod.Namespace, pod.Name)
 		if round != 0 {
-			klog.Infof("trigger new round %d for pod deleting %s/%s", round, request.Namespace, request.Name)
+			klog.Infof("trigger new round %d for pod deleting %s/%s", round, pod.Namespace, pod.Name)
 		}
 		return admission.Allowed(fmt.Sprintf("new round: %d", round))
 	case admissionv1.Create:

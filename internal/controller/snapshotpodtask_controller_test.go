@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -40,11 +41,49 @@ var _ = Describe("SnapshotPodTask Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		snapshotpodtask := &snapshotpodv1alpha1.SnapshotPodTask{}
+		snapshotpodtask := &snapshotpodv1alpha1.SnapshotPodTask{
+			Spec: snapshotpodv1alpha1.SnapshotPodTaskSpec{
+				PodName:     "test-pod",
+				ContainerID: "test-container-id",
+			},
+		}
+
+		pod := &corev1.Pod{}
 
 		BeforeEach(func() {
+			By("create pod for test")
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-pod",
+				Namespace: "default",
+			}, pod)
+			if err != nil && errors.IsNotFound(err) {
+				pod = &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "test-container",
+								Image: "busybox",
+							},
+						},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								ContainerID: "test-container-id",
+								Ready:       true,
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			}
+
 			By("creating the custom resource for the Kind SnapshotPodTask")
-			err := k8sClient.Get(ctx, typeNamespacedName, snapshotpodtask)
+			err = k8sClient.Get(ctx, typeNamespacedName, snapshotpodtask)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &snapshotpodv1alpha1.SnapshotPodTask{
 					ObjectMeta: metav1.ObjectMeta{

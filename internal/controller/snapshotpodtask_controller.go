@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -127,6 +128,49 @@ func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *sn
 }
 
 func (r *SnapshotPodTaskReconciler) reconcileAccept(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
+	pod := corev1.Pod{}
+	err := r.Client.Get(ctx, client.ObjectKey{
+		Namespace: spt.Namespace,
+		Name:      spt.Spec.PodName,
+	}, &pod)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			spt.Status.Conditions = append(spt.Status.Conditions, metav1.Condition{
+				Type:    "Accept",
+				Status:  metav1.ConditionFalse,
+				Reason:  "PodNotFound",
+				Message: fmt.Sprintf("pod %s/%s not found", spt.Namespace, spt.Spec.PodName),
+			})
+			return fmt.Errorf("pod %s/%s not found", spt.Namespace, spt.Spec.PodName)
+		}
+	}
+	foundContainer := false
+	containerReady := false
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.ContainerID == spt.Spec.ContainerID {
+			foundContainer = true
+			containerReady = containerStatus.Ready
+			break
+		}
+	}
+	if !foundContainer {
+		spt.Status.Conditions = append(spt.Status.Conditions, metav1.Condition{
+			Type:    "Accept",
+			Status:  metav1.ConditionFalse,
+			Reason:  "ContainerNotFound",
+			Message: fmt.Sprintf("container %s not found in pod %s/%s", spt.Spec.ContainerID, spt.Namespace, spt.Spec.PodName),
+		})
+		return fmt.Errorf("container %s not found in pod %s/%s", spt.Spec.ContainerID, spt.Namespace, spt.Spec.PodName)
+	}
+	if !containerReady {
+		spt.Status.Conditions = append(spt.Status.Conditions, metav1.Condition{
+			Type:    "Accept",
+			Status:  metav1.ConditionFalse,
+			Reason:  "ContainerNotReady",
+			Message: fmt.Sprintf("container %s in pod %s/%s not ready", spt.Spec.ContainerID, spt.Namespace, spt.Spec.PodName),
+		})
+		return fmt.Errorf("container %s in pod %s/%s not ready", spt.Spec.ContainerID, spt.Namespace, spt.Spec.PodName)
+	}
 	return nil
 }
 
@@ -218,6 +262,16 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed
 	default:
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCreated
+	}
+
+	_, podNotFound := lo.Find(spt.Status.Conditions, func(item metav1.Condition) bool {
+		return item.Type == "Accept" && item.Status == metav1.ConditionFalse && item.Reason == "PodNotFound"
+	})
+	_, containerNotFound := lo.Find(spt.Status.Conditions, func(item metav1.Condition) bool {
+		return item.Type == "Accept" && item.Status == metav1.ConditionFalse && item.Reason == "ContainerNotFound"
+	})
+	if podNotFound || containerNotFound {
+		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed
 	}
 
 	if err := r.Status().Update(ctx, &spt); err != nil {

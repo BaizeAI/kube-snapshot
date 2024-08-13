@@ -36,10 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
-)
-
-const (
-	snapshotNameLabel = "snapshot-pod.baizeai.io/name"
+	"github.com/baizeai/kube-snapshot/pkg/apis/snapshotpod/v1alpha1"
 )
 
 // SnapshotPodReconciler reconciles a SnapshotPod object
@@ -124,7 +121,7 @@ func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshot
 					snapshotPodOwner(sp),
 				},
 				Labels: map[string]string{
-					snapshotNameLabel: sp.Name,
+					v1alpha1.SnapshotNameLabel: sp.Name,
 				},
 			},
 			Spec: snapshotpodv1alpha1.SnapshotPodTaskSpec{
@@ -164,7 +161,7 @@ func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *sn
 	sptList := snapshotpodv1alpha1.SnapshotPodTaskList{}
 	selector, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			snapshotNameLabel: sp.Name,
+			v1alpha1.SnapshotNameLabel: sp.Name,
 		},
 	})
 	err := r.Client.List(ctx, &sptList, &client.ListOptions{

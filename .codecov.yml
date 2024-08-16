@@ -1,0 +1,31 @@
+coverage:
+  status:
+    # allow test coverage to drop by 0.1%, assume that it's typically due to CI problems
+    patch:
+      default:
+        threshold: 0.1
+    project:
+      default:
+        target: auto 
+        threshold: 0.1
+        base: auto 
+
+comment:                  
+  layout: " diff, flags, files"
+  behavior: default
+  require_changes: false  
+  require_base: false    
+  require_head: true  
+  hide_project_coverage: true 
+
+ignore:
+  - 'api/v1alpha1'
+  - 'test'
+  - '**/*.pb.go'
+  - '**/*.pb.gw.go'
+  - '**/*generated.go'
+  - '**/*generated.deepcopy.go'
+  - '**/*_test.go'
+  - 'vendor/.*'
+  - '**/mocks/*'
+  - 'hack'

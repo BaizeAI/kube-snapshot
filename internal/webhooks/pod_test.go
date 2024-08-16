@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/samber/lo"
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 )
@@ -149,6 +150,12 @@ func mustMarshalObject(obj runtime.Object) []byte {
 	return data
 }
 
+func newPodWithDeleteTime() *corev1.Pod {
+	pod := newPod()
+	pod.DeletionTimestamp = lo.ToPtr(metav1.NewTime(time.Now()))
+	return pod
+}
+
 func TestPodImageWebhookAdmission_Handle(t *testing.T) {
 	type fields struct {
 		Client client.Client
@@ -274,6 +281,68 @@ func TestPodImageWebhookAdmission_Handle(t *testing.T) {
 				AdmissionResponse: admissionv1.AdmissionResponse{
 					UID:     "test-uid",
 					Allowed: true,
+				},
+			},
+		},
+		{
+			name: "test handle delete event",
+			fields: fields{
+				Client: newFakeClient(newSnapshotPod()),
+			},
+			args: args{
+				request: admission.Request{
+					AdmissionRequest: admissionv1.AdmissionRequest{
+						Operation: admissionv1.Delete,
+						UID:       "test-uid",
+						OldObject: runtime.RawExtension{
+							Raw: mustMarshalObject(newPod1()),
+						},
+						Resource: metav1.GroupVersionResource{
+							Group:    "",
+							Version:  "v1",
+							Resource: "pods",
+						},
+					},
+				},
+			},
+			want: admission.Response{
+				AdmissionResponse: admissionv1.AdmissionResponse{
+					Allowed: true,
+					Result: &metav1.Status{
+						Message: "new round: 3",
+						Code:    200,
+					},
+				},
+			},
+		},
+		{
+			name: "test event already handled",
+			fields: fields{
+				Client: newFakeClient(newSnapshotPod()),
+			},
+			args: args{
+				request: admission.Request{
+					AdmissionRequest: admissionv1.AdmissionRequest{
+						Operation: admissionv1.Delete,
+						UID:       "test-uid",
+						OldObject: runtime.RawExtension{
+							Raw: mustMarshalObject(newPodWithDeleteTime()),
+						},
+						Resource: metav1.GroupVersionResource{
+							Group:    "",
+							Version:  "v1",
+							Resource: "pods",
+						},
+					},
+				},
+			},
+			want: admission.Response{
+				AdmissionResponse: admissionv1.AdmissionResponse{
+					Allowed: true,
+					Result: &metav1.Status{
+						Message: "already handled",
+						Code:    200,
+					},
 				},
 			},
 		},

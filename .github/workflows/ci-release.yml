@@ -31,7 +31,7 @@ jobs:
         go-version: 1.22.2
     - name: Test
       run: make test
-    - uses: codecov/codecov-action@v3.1.4
+    - uses: codecov/codecov-action@v4.5.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
         files: ./cover.out # optional

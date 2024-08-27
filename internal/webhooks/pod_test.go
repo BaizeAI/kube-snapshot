@@ -287,7 +287,11 @@ func TestPodImageWebhookAdmission_Handle(t *testing.T) {
 		{
 			name: "test handle delete event",
 			fields: fields{
-				Client: newFakeClient(newSnapshotPod()),
+				Client: newFakeClient(func() client.Object {
+					pod := newSnapshotPod()
+					pod.Spec.AutoSaveOptions.AutoSaveOnTermination = true
+					return pod
+				}()),
 			},
 			args: args{
 				request: admission.Request{
@@ -310,6 +314,37 @@ func TestPodImageWebhookAdmission_Handle(t *testing.T) {
 					Allowed: true,
 					Result: &metav1.Status{
 						Message: "new round: 3",
+						Code:    200,
+					},
+				},
+			},
+		},
+		{
+			name: "test disable auto save",
+			fields: fields{
+				Client: newFakeClient(newSnapshotPod()),
+			},
+			args: args{
+				request: admission.Request{
+					AdmissionRequest: admissionv1.AdmissionRequest{
+						Operation: admissionv1.Delete,
+						UID:       "test-uid",
+						OldObject: runtime.RawExtension{
+							Raw: mustMarshalObject(newPod1()),
+						},
+						Resource: metav1.GroupVersionResource{
+							Group:    "",
+							Version:  "v1",
+							Resource: "pods",
+						},
+					},
+				},
+			},
+			want: admission.Response{
+				AdmissionResponse: admissionv1.AdmissionResponse{
+					Allowed: true,
+					Result: &metav1.Status{
+						Message: "new round: 0",
 						Code:    200,
 					},
 				},

@@ -134,6 +134,12 @@ func (p *PodImageWebhookAdmission) handlePodUpdate(ctx context.Context, ns, podN
 	if !ok {
 		return 0, nil
 	}
+
+	if !sp.Spec.AutoSaveOptions.AutoSaveOnTermination {
+		klog.Infof("no auto save for pod %s/%s", ns, podName)
+		return 0, nil
+	}
+
 	sp.Spec.TriggerRound += 1
 	err = p.Update(ctx, &sp)
 	return sp.Spec.TriggerRound, err

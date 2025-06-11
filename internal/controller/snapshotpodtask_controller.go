@@ -246,9 +246,13 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SnapshotPodTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	containerdCompatibleRuntime, err := criruntime.NewContainerdCompatibleRuntime("nerdctl", "--debug", "-n", "k8s.io")
+	if err != nil {
+		return fmt.Errorf("failed to create containerd compatible runtime: %w", err)
+	}
 	r.runtimeMap = map[string]criruntime.Runtime{
 		dockerRuntime:     criruntime.NewDockerCompatibleRuntime("docker", "--debug"),
-		containerdRuntime: criruntime.NewDockerCompatibleRuntime("nerdctl", "--debug", "-n", "k8s.io"),
+		containerdRuntime: containerdCompatibleRuntime,
 		// for kind
 		// containerdRuntime: criruntime.NewDockerCompatibleRuntime("docker", "exec", "-i", "kind-control-plane", "nerdctl", "-n", "k8s.io"),
 	}

@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM docker.io/golang:1.22 AS builder
+FROM docker.io/golang:1.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -30,7 +30,7 @@ FROM docker.io/ubuntu:22.04
 WORKDIR /
 
 ENV DOCKER_VERSION=26.1.3
-ENV NERDCTL_VERSION=2.0.4
+ENV NERDCTL_VERSION=2.1.2
 
 RUN apt-get update && apt-get install -y curl && apt-get clean && \
     curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz | tar -xzC /usr/local/bin --strip-components=1 docker/docker && \

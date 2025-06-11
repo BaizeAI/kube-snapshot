@@ -96,3 +96,15 @@ func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string
 	klog.Infof("execCommand: %s %v, out: %s, errOut: %s, err: %v", d.dockerCompatibleCommand, args, out.String(), errOut.String(), err)
 	return err
 }
+
+func (d *dockerCompatibleRuntime) execCommandPOut(ctx context.Context, args []string, stdin io.Reader) (*bytes.Buffer, error) {
+	c := exec.CommandContext(ctx, d.dockerCompatibleCommand, append(d.globalArgs, args...)...)
+	out := bytes.NewBuffer(nil)
+	errOut := bytes.NewBuffer(nil)
+	c.Stdin = stdin
+	c.Stdout = out
+	c.Stderr = errOut
+	err := c.Run()
+	klog.Infof("execCommand: %s %v, out: %s, errOut: %s, err: %v", d.dockerCompatibleCommand, args, out.String(), errOut.String(), err)
+	return out, err
+}

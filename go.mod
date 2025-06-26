@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/containerd/containerd/v2 v2.1.3
-	github.com/containerd/nerdctl/v2 v2.1.3-0.20250611024800-401800a2f38c
+	github.com/containerd/nerdctl/v2 v2.1.3-0.20250626063530-90e0caaf46d2
 	github.com/containers/image/v5 v5.35.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0

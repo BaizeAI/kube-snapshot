@@ -2,7 +2,7 @@ module github.com/baizeai/kube-snapshot
 
 go 1.24.0
 
-toolchain go1.24.1
+toolchain go1.24.4
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.1

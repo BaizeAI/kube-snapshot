@@ -94,8 +94,20 @@ spec:
                       last_repository - the last part repository, like baize-ui
                       tag - the tag of origin image, if not set, will be latest, if use sha format image like nginx@sha256:abcdef, tag will be the real sha value like abcdef
                     type: string
+                  maxRetries:
+                    default: 3
+                    description: MaxRetries defines the maximum number of retries
+                      when the task fails
+                    format: int32
+                    type: integer
                   registrySecretRef:
                     type: string
+                  retryDelaySeconds:
+                    default: 30
+                    description: RetryDelaySeconds defines the delay between retries
+                      in seconds
+                    format: int32
+                    type: integer
                 type: object
               recoveryRound:
                 description: |-

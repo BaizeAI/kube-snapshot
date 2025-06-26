@@ -30,6 +30,16 @@ type SnapshotPodTaskSpec struct {
 	OriginRegistrySecretRef string        `json:"originRegistrySecretRef,omitempty"`
 	CommitImage             string        `json:"commitImage,omitempty"`
 	RegistrySecretRef       string        `json:"registrySecretRef,omitempty"`
+
+	// MaxRetries defines the maximum number of retries when the task fails
+	// +optional
+	// +kubebuilder:default:=3
+	MaxRetries int32 `json:"maxRetries,omitempty"`
+
+	// RetryDelaySeconds defines the delay between retries in seconds
+	// +optional
+	// +kubebuilder:default:=30
+	RetryDelaySeconds int32 `json:"retryDelaySeconds,omitempty"`
 }
 
 type SnapshotPodTaskPhase string
@@ -44,6 +54,14 @@ const (
 type SnapshotPodTaskStatus struct {
 	Conditions []metav1.Condition   `json:"conditions,omitempty"`
 	Phase      SnapshotPodTaskPhase `json:"phase,omitempty"`
+
+	// RetryCount records the number of retries attempted
+	// +optional
+	RetryCount int32 `json:"retryCount,omitempty"`
+
+	// LastRetryTime records the time of the last retry attempt
+	// +optional
+	LastRetryTime *metav1.Time `json:"lastRetryTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -54,6 +72,7 @@ type SnapshotPodTaskStatus struct {
 // +kubebuilder:printcolumn:name="pod",type=string,JSONPath=`.spec.podName`
 // +kubebuilder:printcolumn:name="image",type=string,JSONPath=`.spec.commitImage`
 // +kubebuilder:printcolumn:name="phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="retries",type=string,JSONPath=`.status.retryCount`
 type SnapshotPodTask struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

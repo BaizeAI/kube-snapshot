@@ -174,7 +174,8 @@ func (p *PodImageWebhookAdmission) handlePodCreate(ctx context.Context, pod *cor
 		return nil, false
 	}
 	out := map[string]imageConfig{}
-	if sp.Spec.RecoveryRound > 0 {
+	switch {
+	case sp.Spec.RecoveryRound > 0:
 		lo.ForEach(lo.Filter(sp.Status.Snapshots, func(item snapshotpodv1alpha1.SnapshotRunningStatus, index int) bool {
 			return item.TriggerRound == sp.Spec.RecoveryRound
 		}), func(item snapshotpodv1alpha1.SnapshotRunningStatus, index int) {
@@ -183,7 +184,7 @@ func (p *PodImageWebhookAdmission) handlePodCreate(ctx context.Context, pod *cor
 				pullSecret: sp.Spec.ImageSaveOptions.RegistrySecretRef,
 			}
 		})
-	} else if sp.Spec.RecoveryRound == 0 {
+	case sp.Spec.RecoveryRound == 0:
 		sort.Slice(sp.Status.Snapshots, func(i, j int) bool {
 			return sp.Status.Snapshots[i].TriggerRound > sp.Status.Snapshots[j].TriggerRound
 		})
@@ -199,7 +200,7 @@ func (p *PodImageWebhookAdmission) handlePodCreate(ctx context.Context, pod *cor
 				}
 			}
 		})
-	} else {
+	default:
 		return nil, false
 	}
 	return out, len(out) > 0

@@ -57,6 +57,15 @@ type ImageSaveOptions struct {
 	// tag - the tag of origin image, if not set, will be latest, if use sha format image like nginx@sha256:abcdef, tag will be the real sha value like abcdef
 	ImageRefFormat    string `json:"imageRefFormat,omitempty"`
 	RegistrySecretRef string `json:"registrySecretRef,omitempty"`
+	// MaxRetries defines the maximum number of retries when the task fails
+	// +optional
+	// +kubebuilder:default:=3
+	MaxRetries int32 `json:"maxRetries,omitempty"`
+
+	// RetryDelaySeconds defines the delay between retries in seconds
+	// +optional
+	// +kubebuilder:default:=30
+	RetryDelaySeconds int32 `json:"retryDelaySeconds,omitempty"`
 }
 
 type AutoSaveOptions struct {

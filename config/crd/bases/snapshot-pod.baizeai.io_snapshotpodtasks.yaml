@@ -26,6 +26,9 @@ spec:
     - jsonPath: .status.phase
       name: phase
       type: string
+    - jsonPath: .status.retryCount
+      name: retries
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -73,6 +76,12 @@ spec:
                 type: object
               containerID:
                 type: string
+              maxRetries:
+                default: 3
+                description: MaxRetries defines the maximum number of retries when
+                  the task fails
+                format: int32
+                type: integer
               nodeName:
                 type: string
               originImage:
@@ -83,6 +92,12 @@ spec:
                 type: string
               registrySecretRef:
                 type: string
+              retryDelaySeconds:
+                default: 30
+                description: RetryDelaySeconds defines the delay between retries in
+                  seconds
+                format: int32
+                type: integer
             required:
             - commitOptions
             - podName
@@ -159,8 +174,16 @@ spec:
                   - type
                   type: object
                 type: array
+              lastRetryTime:
+                description: LastRetryTime records the time of the last retry attempt
+                format: date-time
+                type: string
               phase:
                 type: string
+              retryCount:
+                description: RetryCount records the number of retries attempted
+                format: int32
+                type: integer
             type: object
         type: object
     served: true

@@ -32,7 +32,7 @@ spec:
         - name: host-certs
           hostPath:
             path: {{ if eq .Values.CRIRuntime "containerd" }}/etc/containerd/certs.d{{ else }}/etc/docker/certs.d{{ end }}
-            type: Directory
+            type: DirectoryOrCreate
         {{ if .Values.systemWideDockerSecret }}
         - name: docker-registry-secret
           secret:

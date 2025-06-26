@@ -156,6 +156,14 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// not my job
 		return ctrl.Result{}, nil
 	}
+	if spt.Status.Phase == snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted ||
+		spt.Status.Phase == snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed {
+		return ctrl.Result{}, nil
+	}
+	if spt.Status.RetryCount < 0 {
+		spt.Status.RetryCount = 0
+	}
+
 	type reconciler func(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error
 	type rec struct {
 		typ string
@@ -175,6 +183,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			r:   r.reconcilePushImage,
 		},
 	}
+	var lastError error
 	for _, rec := range recs {
 		_, i, ok := lo.FindIndexOf(spt.Status.Conditions, func(item metav1.Condition) bool {
 			return item.Type == rec.typ
@@ -198,6 +207,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			logger.Error(err, "run reconcile task error", "type", rec.typ, "namespace", spt.Namespace, "name", spt.Name)
 			spt.Status.Conditions[i].Status = metav1.ConditionFalse
 			spt.Status.Conditions[i].Message = err.Error()
+			lastError = err
 			// Update status immediately after error
 			if updateErr := r.Status().Update(ctx, &spt); updateErr != nil {
 				return ctrl.Result{}, updateErr
@@ -224,10 +234,25 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}):
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted
 	case lo.SomeBy(spt.Status.Conditions, func(item metav1.Condition) bool {
-		// check timeout
-		return item.Status != metav1.ConditionTrue && item.LastTransitionTime.Add(time.Minute*10).Before(time.Now())
+		if item.Status != metav1.ConditionTrue {
+			if lastError != nil || item.LastTransitionTime.Add(time.Minute*10).Before(time.Now()) {
+				return true
+			}
+		}
+		return false
 	}):
-		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed
+		spt.Status.RetryCount++
+		spt.Status.LastRetryTime = lo.ToPtr(metav1.Now())
+		maxRetries := spt.Spec.MaxRetries
+		if maxRetries == 0 {
+			maxRetries = 3
+		}
+		if spt.Status.RetryCount >= maxRetries {
+			spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed
+			logger.Info("task failed after max retries",
+				"retryCount", spt.Status.RetryCount,
+				"maxRetries", maxRetries)
+		}
 	default:
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCreated
 	}
@@ -241,7 +266,11 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	case snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed, snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted:
 		return ctrl.Result{}, nil
 	}
-	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
+	retryDelay := time.Second * 30
+	if spt.Spec.RetryDelaySeconds > 0 {
+		retryDelay = time.Second * time.Duration(spt.Spec.RetryDelaySeconds)
+	}
+	return ctrl.Result{RequeueAfter: retryDelay}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

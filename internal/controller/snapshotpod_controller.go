@@ -62,16 +62,33 @@ func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alp
 		podList := corev1.PodList{}
 		err := r.Client.List(ctx, &podList, &client.ListOptions{
 			LabelSelector: labels.SelectorFromSet(sp.Spec.Target.Selector),
+			Namespace:     sp.Namespace,
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to list pods: %w", err)
 		}
-		if len(podList.Items) != 1 {
-			return nil, fmt.Errorf("target pod not found or not unique")
+
+		var runningPods []corev1.Pod
+		for _, pod := range podList.Items {
+			if pod.Status.Phase == corev1.PodRunning {
+				runningPods = append(runningPods, pod)
+			}
 		}
-		return &podList.Items[0], nil
+		switch len(runningPods) {
+		case 0:
+			return nil, fmt.Errorf("no running pod found with selector %v", sp.Spec.Target.Selector)
+		case 1:
+			return &runningPods[0], nil
+		default:
+			podNames := make([]string, 0, len(runningPods))
+			for _, pod := range runningPods {
+				podNames = append(podNames, pod.Name)
+			}
+			return nil, fmt.Errorf("multiple running pods found with selector %v: %v",
+				sp.Spec.Target.Selector, strings.Join(podNames, ", "))
+		}
 	}
-	return nil, fmt.Errorf("target pod not found")
+	return nil, fmt.Errorf("target selector not specified")
 }
 
 func (r *SnapshotPodReconciler) validate(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
@@ -152,6 +169,8 @@ func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshot
 				OriginImage:       cs.Image,
 				CommitImage:       newImage,
 				RegistrySecretRef: sp.Spec.ImageSaveOptions.RegistrySecretRef,
+				MaxRetries:        sp.Spec.ImageSaveOptions.MaxRetries,
+				RetryDelaySeconds: sp.Spec.ImageSaveOptions.RetryDelaySeconds,
 			},
 			Status: snapshotpodv1alpha1.SnapshotPodTaskStatus{},
 		}

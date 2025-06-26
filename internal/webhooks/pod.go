@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"k8s.io/utils/pointer"
 	"sort"
 	"strconv"
 
@@ -35,7 +34,7 @@ type imageConfig struct {
 func (p *PodImageWebhookAdmission) SetupWebhookWithManager(mgr manager.Manager) error {
 	mgr.GetWebhookServer().Register("/mutate-v1-pod", &webhook.Admission{
 		Handler:      p,
-		RecoverPanic: pointer.Bool(true),
+		RecoverPanic: lo.ToPtr(true),
 	})
 	return ctrl.NewWebhookManagedBy(mgr).For(&corev1.Pod{}).Complete()
 }

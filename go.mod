@@ -1,11 +1,9 @@
 module github.com/baizeai/kube-snapshot
 
-go 1.24.0
-
-toolchain go1.24.4
+go 1.24.5
 
 require (
-	github.com/Masterminds/semver/v3 v3.3.1
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/containerd/containerd/v2 v2.1.3
 	github.com/containerd/nerdctl/v2 v2.1.3-0.20250626063530-90e0caaf46d2
 	github.com/containers/image/v5 v5.35.0

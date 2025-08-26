@@ -52,7 +52,7 @@ func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alp
 	}
 	if sp.Spec.Target.Name != "" {
 		pod := corev1.Pod{}
-		err := r.Client.Get(ctx, client.ObjectKey{
+		err := r.Get(ctx, client.ObjectKey{
 			Namespace: sp.Namespace,
 			Name:      sp.Spec.Target.Name,
 		}, &pod)
@@ -60,7 +60,7 @@ func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alp
 	}
 	if sp.Spec.Target.Selector != nil {
 		podList := corev1.PodList{}
-		err := r.Client.List(ctx, &podList, &client.ListOptions{
+		err := r.List(ctx, &podList, &client.ListOptions{
 			LabelSelector: labels.SelectorFromSet(sp.Spec.Target.Selector),
 			Namespace:     sp.Namespace,
 		})
@@ -174,7 +174,7 @@ func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshot
 			},
 			Status: snapshotpodv1alpha1.SnapshotPodTaskStatus{},
 		}
-		err = r.Client.Create(ctx, &spt)
+		err = r.Create(ctx, &spt)
 		if err != nil && !errors.IsAlreadyExists(err) {
 			return err
 		}
@@ -203,7 +203,7 @@ func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *sn
 			v1alpha1.SnapshotNameLabel: sp.Name,
 		},
 	})
-	err := r.Client.List(ctx, &sptList, &client.ListOptions{
+	err := r.List(ctx, &sptList, &client.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
@@ -313,7 +313,7 @@ func renderNewImageName(originImage, format string) (string, error) {
 func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	sp := snapshotpodv1alpha1.SnapshotPod{}
-	err := r.Client.Get(ctx, req.NamespacedName, &sp)
+	err := r.Get(ctx, req.NamespacedName, &sp)
 	if err != nil {
 		logger.Error(err, "get instance error")
 		return ctrl.Result{}, err

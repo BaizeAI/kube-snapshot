@@ -145,7 +145,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	logger := log.FromContext(ctx)
 
 	spt := snapshotpodv1alpha1.SnapshotPodTask{}
-	err := r.Client.Get(ctx, req.NamespacedName, &spt)
+	err := r.Get(ctx, req.NamespacedName, &spt)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil

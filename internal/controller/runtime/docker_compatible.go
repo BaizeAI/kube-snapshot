@@ -24,13 +24,14 @@ func NewDockerCompatibleRuntime(cmd string, globalArgs ...string) Runtime {
 }
 
 func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID, image string, pause bool, message, author string) error {
-	args := []string{"commit", containerID, image, fmt.Sprintf("--pause=%v", pause)}
+	args := []string{"commit", fmt.Sprintf("--pause=%v", pause)}
 	if message != "" {
 		args = append(args, "--message", message)
 	}
 	if author != "" {
 		args = append(args, "--author", author)
 	}
+	args = append(args, containerID, image)
 	if err := d.execCommand(ctx, args, nil); err != nil {
 		return fmt.Errorf("commit image: %s", err)
 	}

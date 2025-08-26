@@ -57,6 +57,11 @@ type ImageSaveOptions struct {
 	// tag - the tag of origin image, if not set, will be latest, if use sha format image like nginx@sha256:abcdef, tag will be the real sha value like abcdef
 	ImageRefFormat    string `json:"imageRefFormat,omitempty"`
 	RegistrySecretRef string `json:"registrySecretRef,omitempty"`
+	// AppendSnappedSuffix controls whether to append "-snapped" suffix to the image tag.
+	// If true, the suffix will be added; if false, no suffix will be added.
+	// +optional
+	// +kubebuilder:default:=true
+	AppendSnappedSuffix *bool `json:"appendSnappedSuffix,omitempty"`
 	// MaxRetries defines the maximum number of retries when the task fails
 	// +optional
 	// +kubebuilder:default:=3

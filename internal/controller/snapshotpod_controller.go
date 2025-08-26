@@ -146,7 +146,14 @@ func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshot
 		if cs.ContainerID == "" {
 			return fmt.Errorf("container %s not started", c)
 		}
-		newImage, err := renderNewImageName(cs.Image, sp.Spec.ImageSaveOptions.ImageRefFormat)
+
+		// Get appendSnappedSuffix value, default to true if not specified
+		appendSnappedSuffix := true
+		if sp.Spec.ImageSaveOptions.AppendSnappedSuffix != nil {
+			appendSnappedSuffix = *sp.Spec.ImageSaveOptions.AppendSnappedSuffix
+		}
+
+		newImage, err := renderNewImageName(cs.Image, sp.Spec.ImageSaveOptions.ImageRefFormat, appendSnappedSuffix)
 		if err != nil {
 			return err
 		}
@@ -241,21 +248,25 @@ func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *sn
 	return nil
 }
 
-func withRandomTag(tag string) string {
-	fixed := "snapped-"
-	if strings.Contains(tag, fixed) {
+func withRandomTag(tag string, appendSnappedSuffix bool) string {
+	if !appendSnappedSuffix {
 		return tag
 	}
-	gen := func() string {
-		return fmt.Sprintf("%s%d-%s", fixed, time.Now().Unix(), strings.ReplaceAll(uuid.New().String(), "-", "")[:8])
+
+	if strings.Contains(tag, "snapped-") {
+		return tag
 	}
+
+	suffix := fmt.Sprintf("snapped-%d-%s", time.Now().Unix(), strings.ReplaceAll(uuid.New().String(), "-", "")[:8])
+
 	if tag == "" || tag == "latest" {
-		return gen()
+		return suffix
 	}
-	return fmt.Sprintf("%s-%s", tag, gen())
+
+	return fmt.Sprintf("%s-%s", tag, suffix)
 }
 
-func renderNewImageName(originImage, format string) (string, error) {
+func renderNewImageName(originImage, format string, appendSnappedSuffix bool) (string, error) {
 	ref, err := docker.ParseReference("//" + originImage)
 	if err != nil {
 		return "", err
@@ -286,9 +297,9 @@ func renderNewImageName(originImage, format string) (string, error) {
 	}
 	newTag := ""
 	if v, ok := ref.DockerReference().(reference.NamedTagged); !ok {
-		newTag = withRandomTag("")
+		newTag = withRandomTag("", appendSnappedSuffix)
 	} else {
-		newTag = withRandomTag(v.Tag())
+		newTag = withRandomTag(v.Tag(), appendSnappedSuffix)
 	}
 	v, err := reference.WithTag(ref.DockerReference(), newTag)
 	if err != nil {

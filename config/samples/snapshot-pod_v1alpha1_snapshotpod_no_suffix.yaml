@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: snapshot-pod
     app.kubernetes.io/managed-by: kustomize
-  name: snapshotpod-sample
+  name: snapshotpod-sample-no-suffix
 spec:
   target:
     name: test
@@ -12,12 +12,10 @@ spec:
   commitOptions:
     pauseContainer: false
     timeout: 3m
-    message: auto save
+    message: auto save without snapped suffix
   imageSaveOptions:
     imageRefFormat: aiharbor.daocloud.io/kebe-test/{last_repository}
-    # appendSnappedSuffix controls whether to append the full suffix to the image tag
-    # If true (default), the full suffix will be added: -snapped-{timestamp}-{uuid}
-    # If false, no suffix will be added at all
-    # +optional
-    appendSnappedSuffix: true
+    # Set appendSnappedSuffix to false to disable the full suffix
+    # When false, the image tag will remain unchanged
+    appendSnappedSuffix: false
 #    registrySecretRef: aiharbor-secret

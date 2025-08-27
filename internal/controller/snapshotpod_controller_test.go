@@ -31,6 +31,76 @@ import (
 )
 
 var _ = Describe("SnapshotPod Controller", func() {
+	Context("When testing withRandomTag function", func() {
+		It("should return original tag when appendSnappedSuffix is false", func() {
+			By("Testing with appendSnappedSuffix = false")
+
+			// Test case 1: empty tag
+			result := withRandomTag("", false)
+			Expect(result).To(Equal(""))
+
+			// Test case 2: latest tag
+			result = withRandomTag("latest", false)
+			Expect(result).To(Equal("latest"))
+
+			// Test case 3: custom tag
+			result = withRandomTag("v1.0.0", false)
+			Expect(result).To(Equal("v1.0.0"))
+
+			// Test case 4: tag with special characters
+			result = withRandomTag("release-2024-01", false)
+			Expect(result).To(Equal("release-2024-01"))
+		})
+
+		It("should append snapped suffix when appendSnappedSuffix is true", func() {
+			By("Testing with appendSnappedSuffix = true")
+
+			// Test case 1: empty tag
+			result := withRandomTag("", true)
+			Expect(result).To(ContainSubstring("snapped-"))
+			Expect(result).To(MatchRegexp(`^snapped-\d+-[a-f0-9]{8}$`))
+
+			// Test case 2: latest tag
+			result = withRandomTag("latest", true)
+			Expect(result).To(ContainSubstring("snapped-"))
+			Expect(result).To(MatchRegexp(`^snapped-\d+-[a-f0-9]{8}$`))
+
+			// Test case 3: custom tag
+			result = withRandomTag("v1.0.0", true)
+			Expect(result).To(ContainSubstring("v1.0.0-snapped-"))
+			Expect(result).To(MatchRegexp(`^v1\.0\.0-snapped-\d+-[a-f0-9]{8}$`))
+
+			// Test case 4: tag with special characters
+			result = withRandomTag("release-2024-01", true)
+			Expect(result).To(ContainSubstring("release-2024-01-snapped-"))
+			Expect(result).To(MatchRegexp(`^release-2024-01-snapped-\d+-[a-f0-9]{8}$`))
+		})
+
+		It("should not append suffix to already snapped tags", func() {
+			By("Testing with tags that already contain 'snapped-'")
+
+			// Test case 1: already snapped tag
+			alreadySnapped := "v1.0.0-snapped-1704067200-abc12345"
+			result := withRandomTag(alreadySnapped, true)
+			Expect(result).To(Equal(alreadySnapped))
+
+			// Test case 2: already snapped tag with appendSnappedSuffix = false
+			result = withRandomTag(alreadySnapped, false)
+			Expect(result).To(Equal(alreadySnapped))
+		})
+
+		It("should generate unique suffixes for different calls", func() {
+			By("Testing that multiple calls generate different suffixes")
+
+			result1 := withRandomTag("test", true)
+			result2 := withRandomTag("test", true)
+
+			Expect(result1).NotTo(Equal(result2))
+			Expect(result1).To(ContainSubstring("test-snapped-"))
+			Expect(result2).To(ContainSubstring("test-snapped-"))
+		})
+	})
+
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 

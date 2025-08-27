@@ -82,6 +82,12 @@ spec:
               imageSaveOptions:
                 description: Image save options.
                 properties:
+                  appendSnappedSuffix:
+                    default: true
+                    description: |-
+                      AppendSnappedSuffix controls whether to append "-snapped" suffix to the image tag.
+                      If true, the suffix will be added; if false, no suffix will be added.
+                    type: boolean
                   imageRefFormat:
                     description: |-
                       ImageRefFormat is the format of new image.

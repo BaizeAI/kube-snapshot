@@ -35,6 +35,7 @@ import (
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 	criruntime "github.com/baizeai/kube-snapshot/internal/controller/runtime"
+	"github.com/baizeai/kube-snapshot/internal/metrics"
 )
 
 const (
@@ -88,13 +89,16 @@ func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, 
 func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
 	rtName, rt, _, err := r.getRuntimeAndContainerID(spt.Spec.ContainerID)
 	if err != nil {
+		metrics.RecordImagePushFailure(spt.Namespace, spt.Spec.PodName, spt.Spec.CommitImage, "runtime_error")
 		return err
 	}
 	if !rt.ImageExists(ctx, spt.Spec.CommitImage) {
+		metrics.RecordImagePushFailure(spt.Namespace, spt.Spec.PodName, spt.Spec.CommitImage, "image_not_exists")
 		return fmt.Errorf("image %s not exists", spt.Spec.CommitImage)
 	}
 	auth, err := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.RegistrySecretRef, spt.Spec.CommitImage)
 	if err != nil {
+		metrics.RecordImagePushFailure(spt.Namespace, spt.Spec.PodName, spt.Spec.CommitImage, "auth_error")
 		return err
 	}
 	if rtName == containerdRuntime {
@@ -103,7 +107,17 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 		a, _ := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.OriginRegistrySecretRef, spt.Spec.OriginImage)
 		_ = rt.Pull(ctx, spt.Spec.OriginImage, a, "--unpack=false")
 	}
-	return rt.Push(ctx, spt.Spec.CommitImage, auth)
+
+	// Attempt the push and record metrics
+	err = rt.Push(ctx, spt.Spec.CommitImage, auth)
+	if err != nil {
+		metrics.RecordImagePushFailure(spt.Namespace, spt.Spec.PodName, spt.Spec.CommitImage, "push_failed")
+		return err
+	}
+
+	// Record successful push
+	metrics.RecordImagePushSuccess(spt.Namespace, spt.Spec.PodName, spt.Spec.CommitImage)
+	return nil
 }
 
 func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
@@ -209,7 +223,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			spt.Status.Conditions[i].Message = err.Error()
 			lastError = err
 			// Update status immediately after error
-			if updateErr := r.Status().Update(ctx, &spt); updateErr != nil {
+			if updateErr := r.Client.Status().Update(ctx, &spt); updateErr != nil {
 				return ctrl.Result{}, updateErr
 			}
 			break
@@ -222,12 +236,13 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			spt.Status.Conditions[i].LastTransitionTime = metav1.Now()
 		}
 		// Update status after each successful step
-		if updateErr := r.Status().Update(ctx, &spt); updateErr != nil {
+		if updateErr := r.Client.Status().Update(ctx, &spt); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
 	}
 
 	// Update phase based on conditions
+	oldPhase := spt.Status.Phase
 	switch {
 	case lo.EveryBy(spt.Status.Conditions, func(item metav1.Condition) bool {
 		return item.Status == metav1.ConditionTrue
@@ -257,8 +272,13 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCreated
 	}
 
+	// Record metrics for phase changes
+	if oldPhase != spt.Status.Phase {
+		metrics.RecordTaskPhase(spt.Namespace, string(spt.Status.Phase))
+	}
+
 	// Final status update for phase change
-	if err := r.Status().Update(ctx, &spt); err != nil {
+	if err := r.Client.Status().Update(ctx, &spt); err != nil {
 		return ctrl.Result{}, err
 	}
 

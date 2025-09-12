@@ -48,6 +48,46 @@ securityContext: {}
 service:
   type: ClusterIP
 
+# Controller service configuration
+controller:
+  service:
+    enabled: false
+    type: ClusterIP
+    metricsPort: 8080
+    metricsTargetPort: 8080
+    healthPort: 8081
+    healthTargetPort: 8081
+    labels: {}
+  serviceMonitor:
+    enabled: false
+    interval: "15s"
+    path: "/metrics"
+    port: "metrics"
+    jobLabel: "app"
+    labels: {}
+    metricRelabelings: []
+    relabelings: []
+
+# Runner service configuration  
+runner:
+  service:
+    enabled: false
+    type: ClusterIP
+    healthPort: 8081
+    healthTargetPort: 8081
+    metricsPort: 8080
+    metricsTargetPort: 8080
+    labels: {}
+  serviceMonitor:
+    enabled: false
+    interval: "15s"
+    path: "/metrics"
+    port: "health"
+    jobLabel: "app"
+    labels: {}
+    metricRelabelings: []
+    relabelings: []
+
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little

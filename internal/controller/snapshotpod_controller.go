@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
+	"github.com/baizeai/kube-snapshot/internal/metrics"
 	"github.com/baizeai/kube-snapshot/pkg/apis/snapshotpod/v1alpha1"
 )
 
@@ -322,11 +323,15 @@ func renderNewImageName(originImage, format string, appendSnappedSuffix bool) (s
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.2/pkg/reconcile
 func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	startTime := time.Now()
 	logger := log.FromContext(ctx)
+
 	sp := snapshotpodv1alpha1.SnapshotPod{}
 	err := r.Client.Get(ctx, req.NamespacedName, &sp)
 	if err != nil {
 		logger.Error(err, "get instance error")
+		metrics.RecordControllerError("snapshotpod", "get_instance_error")
+		metrics.RecordControllerReconcile("snapshotpod", metrics.ControllerResultError, time.Since(startTime))
 		return ctrl.Result{}, err
 	}
 	if sp.Spec.TriggerRound <= 0 {
@@ -392,8 +397,11 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if find || lo.ContainsBy(sp.Status.Conditions, func(item metav1.Condition) bool {
 		return item.Status != metav1.ConditionTrue
 	}) {
+		metrics.RecordControllerReconcile("snapshotpod", metrics.ControllerResultRequeue, time.Since(startTime))
 		return ctrl.Result{RequeueAfter: time.Second * 15}, nil
 	}
+
+	metrics.RecordControllerReconcile("snapshotpod", metrics.ControllerResultSuccess, time.Since(startTime))
 	return ctrl.Result{}, nil
 }
 

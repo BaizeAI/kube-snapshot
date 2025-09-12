@@ -1,0 +1,24 @@
+{{- if .Values.controller.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snapshot-pod.fullname" . }}-controller
+  labels:
+    {{- include "snapshot-pod.labels" . | nindent 4 }}
+    {{- with .Values.controller.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: {{ .Values.controller.service.type | default "ClusterIP" }}
+  ports:
+    - name: metrics
+      port: {{ .Values.controller.service.metricsPort | default 8080 }}
+      protocol: TCP
+      targetPort: {{ .Values.controller.service.metricsTargetPort | default 8080 }}
+    - name: health
+      port: {{ .Values.controller.service.healthPort | default 8081 }}
+      protocol: TCP
+      targetPort: {{ .Values.controller.service.healthTargetPort | default 8081 }}
+  selector:
+    {{- include "snapshot-pod.selectorLabels" . | nindent 4 }}
+{{- end }}

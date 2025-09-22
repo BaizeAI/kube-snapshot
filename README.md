@@ -1,8 +1,8 @@
 # snapshot-pod
-// TODO(user): Add simple overview of use/purpose
+Snapshot and export running Pod container images on Kubernetes nodes.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+This controller creates point-in-time snapshots of running Pods by committing container filesystem layers and optionally pushing the resulting image to a registry. It offers Prometheus metrics for observability of task states, failures, and controller health.
 
 ## Getting Started
 
@@ -65,6 +65,48 @@ make uninstall
 ```sh
 make undeploy
 ```
+
+## Metrics
+
+All metrics are exposed on the controller's Prometheus endpoint.
+
+- Snapshot tasks
+  - `snapshot_tasks_total{status, namespace, snapshot_name}`: Counter. Number of tasks by final/observed status. Use with rate/increase if needed.
+  - `snapshot_task_duration_seconds{status, namespace, snapshot_name}`: Histogram. Task duration seconds by status.
+  - `snapshot_task_retries_total{namespace, snapshot_name, task_name}`: Counter. Retry attempts count.
+  - `snapshot_active_tasks{namespace, snapshot_name}`: Gauge. Current active tasks per SnapshotPod.
+  - `snapshot_tasks_by_node{node_name, status}`: Gauge. Task counts per node and status.
+  - `snapshot_task_failed_total{namespace, snapshot_name, task_name}`: Counter. Increments when a task step errors or task exhausts max retries.
+
+- Controller
+  - `snapshot_controller_reconcile_total{controller, result}`: Counter. Reconcile outcomes (success/error/requeue).
+  - `snapshot_controller_reconcile_duration_seconds{controller}`: Histogram. Reconcile latency.
+  - `snapshot_controller_errors_total{controller, error_type}`: Counter. Controller error events.
+
+- Image push
+  - `snapshot_image_push_total{result, registry, namespace, snapshot_name}`: Counter. Push attempts.
+  - `snapshot_image_push_duration_seconds{registry, namespace, snapshot_name}`: Histogram. Push latency.
+
+### Alerting examples (PromQL)
+
+- New failures in last 5 minutes (per task):
+```promql
+increase(snapshot_task_failed_total[5m]) by (namespace, snapshot_name, task_name) > 0
+```
+
+- Any new failure in a namespace:
+```promql
+sum by (namespace) (increase(snapshot_task_failed_total[5m])) > 0
+```
+
+- Optional stability:
+```yaml
+for: 1m
+```
+
+Notes:
+- Always alert on a rate/increase over a window for counters; do not compare raw counters to 0.
+- Tune the lookback window (e.g., 5m/10m) to balance sensitivity vs stability.
 
 ## Project Distribution
 

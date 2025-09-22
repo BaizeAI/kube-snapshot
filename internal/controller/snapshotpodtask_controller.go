@@ -35,6 +35,8 @@ import (
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 	criruntime "github.com/baizeai/kube-snapshot/internal/controller/runtime"
+	"github.com/baizeai/kube-snapshot/internal/metrics"
+	"github.com/baizeai/kube-snapshot/pkg/apis/snapshotpod/v1alpha1"
 )
 
 const (
@@ -85,16 +87,33 @@ func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, 
 	return &a, nil
 }
 
+// getSnapshotName extracts the snapshot name from the task's labels, falling back to the task name if not found
+func (r *SnapshotPodTaskReconciler) getSnapshotName(spt snapshotpodv1alpha1.SnapshotPodTask) string {
+	snapshotName := spt.Labels[v1alpha1.SnapshotNameLabel]
+	if snapshotName == "" {
+		return "unknown"
+	}
+	return snapshotName
+}
+
 func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
+	startTime := time.Now()
+
+	// Get snapshot name from label
+	snapshotName := r.getSnapshotName(*spt)
+
 	rtName, rt, _, err := r.getRuntimeAndContainerID(spt.Spec.ContainerID)
 	if err != nil {
+		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return err
 	}
 	if !rt.ImageExists(ctx, spt.Spec.CommitImage) {
+		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return fmt.Errorf("image %s not exists", spt.Spec.CommitImage)
 	}
 	auth, err := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.RegistrySecretRef, spt.Spec.CommitImage)
 	if err != nil {
+		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return err
 	}
 	if rtName == containerdRuntime {
@@ -103,7 +122,21 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 		a, _ := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.OriginRegistrySecretRef, spt.Spec.OriginImage)
 		_ = rt.Pull(ctx, spt.Spec.OriginImage, a, "--unpack=false")
 	}
-	return rt.Push(ctx, spt.Spec.CommitImage, auth)
+
+	// Extract image registry for metrics label
+	registry := "unknown"
+	if ref, err := docker.ParseReference("//" + spt.Spec.CommitImage); err == nil {
+		registry = reference.Domain(ref.DockerReference())
+	}
+
+	err = rt.Push(ctx, spt.Spec.CommitImage, auth)
+	if err != nil {
+		metrics.RecordImagePush(metrics.ImagePushResultFailed, registry, spt.Namespace, snapshotName, time.Since(startTime))
+		return err
+	}
+
+	metrics.RecordImagePush(metrics.ImagePushResultSuccess, registry, spt.Namespace, snapshotName, time.Since(startTime))
+	return nil
 }
 
 func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
@@ -142,6 +175,7 @@ func (r *SnapshotPodTaskReconciler) reconcileAccept(ctx context.Context, spt *sn
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.2/pkg/reconcile
 func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	startTime := time.Now()
 	logger := log.FromContext(ctx)
 
 	spt := snapshotpodv1alpha1.SnapshotPodTask{}
@@ -150,6 +184,8 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
+		metrics.RecordControllerError("snapshotpodtask", "get_instance_error")
+		metrics.RecordControllerReconcile("snapshotpodtask", metrics.ControllerResultError, time.Since(startTime))
 		return ctrl.Result{}, err
 	}
 	if spt.Spec.NodeName != r.NodeName {
@@ -208,6 +244,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			spt.Status.Conditions[i].Status = metav1.ConditionFalse
 			spt.Status.Conditions[i].Message = err.Error()
 			lastError = err
+
 			// Update status immediately after error
 			if updateErr := r.Status().Update(ctx, &spt); updateErr != nil {
 				return ctrl.Result{}, updateErr
@@ -227,6 +264,9 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	// Get snapshot name from label for metrics
+	snapshotName := r.getSnapshotName(spt)
+
 	// Update phase based on conditions
 	switch {
 	case lo.EveryBy(spt.Status.Conditions, func(item metav1.Condition) bool {
@@ -243,6 +283,9 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}):
 		spt.Status.RetryCount++
 		spt.Status.LastRetryTime = lo.ToPtr(metav1.Now())
+
+		// Record retry count when it's actually incremented
+		metrics.RecordSnapshotTaskRetry(spt.Namespace, snapshotName, spt.Name)
 		maxRetries := spt.Spec.MaxRetries
 		if maxRetries == 0 {
 			maxRetries = 3
@@ -252,6 +295,8 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			logger.Info("task failed after max retries",
 				"retryCount", spt.Status.RetryCount,
 				"maxRetries", maxRetries)
+
+			metrics.RecordTaskFailed(spt.Namespace, snapshotName, spt.Name)
 		}
 	default:
 		spt.Status.Phase = snapshotpodv1alpha1.SnapshotPodTaskPhaseCreated
@@ -262,10 +307,34 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Record metrics only when task reaches terminal state
+	// For running tasks, we should use gauge metrics instead of counter/histogram
+	if spt.Status.Phase == snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted ||
+		spt.Status.Phase == snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed {
+
+		var status string
+		switch spt.Status.Phase {
+		case snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted:
+			status = metrics.SnapshotTaskStatusSuccess
+		case snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed:
+			status = metrics.SnapshotTaskStatusFailed
+		}
+
+		// Calculate task duration
+		var duration time.Duration
+		if !spt.CreationTimestamp.Time.IsZero() {
+			duration = time.Since(spt.CreationTimestamp.Time)
+		}
+		metrics.RecordSnapshotTask(status, spt.Namespace, snapshotName, duration)
+	}
+
 	switch spt.Status.Phase {
 	case snapshotpodv1alpha1.SnapshotPodTaskPhaseFailed, snapshotpodv1alpha1.SnapshotPodTaskPhaseCompleted:
+		metrics.RecordControllerReconcile("snapshotpodtask", metrics.ControllerResultSuccess, time.Since(startTime))
 		return ctrl.Result{}, nil
 	}
+
+	metrics.RecordControllerReconcile("snapshotpodtask", metrics.ControllerResultRequeue, time.Since(startTime))
 	retryDelay := time.Second * 30
 	if spt.Spec.RetryDelaySeconds > 0 {
 		retryDelay = time.Second * time.Duration(spt.Spec.RetryDelaySeconds)

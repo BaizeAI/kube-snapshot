@@ -43,6 +43,7 @@ import (
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 	"github.com/baizeai/kube-snapshot/internal/controller"
+	"github.com/baizeai/kube-snapshot/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,8 +67,8 @@ func main() {
 	var enableHTTP2 bool
 	var systemWideDockerConfigPath string
 	var certDir string
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metric endpoint binds to. "+
-		"Use the port :8080. If not set, it will be 0 in order to disable the metrics server")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to. "+
+		"Set to '0' to disable the metrics server.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -212,6 +213,11 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
+	// Start metrics collector with shared signal context
+	ctx := ctrl.SetupSignalHandler()
+	metricsCollector := metrics.NewMetricsCollector(mgr.GetClient())
+	go metricsCollector.Start(ctx)
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -222,7 +228,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

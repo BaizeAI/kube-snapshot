@@ -29,8 +29,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 FROM docker.io/ubuntu:22.04
 WORKDIR /
 
-ENV DOCKER_VERSION=26.1.3
-ENV NERDCTL_VERSION=2.1.2
+ENV DOCKER_VERSION=29.3.1
+ENV NERDCTL_VERSION=2.3.2
 
 RUN apt-get update && apt-get install -y curl && apt-get clean && \
     curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz | tar -xzC /usr/local/bin --strip-components=1 docker/docker && \

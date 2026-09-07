@@ -14,7 +14,8 @@ require (
 	github.com/open-policy-agent/cert-controller v0.13.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/samber/lo v1.51.0
-	gomodules.xyz/jsonpatch/v2 v2.5.0
+	gomodules.xyz/jsonpatch/v2 v2.4.0
+	gomodules.xyz/jsonpatch/v3 v3.0.1
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
 	k8s.io/client-go v0.33.3

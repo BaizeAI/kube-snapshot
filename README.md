@@ -91,7 +91,7 @@ All metrics are exposed on the controller's Prometheus endpoint.
 
 - New failures in last 5 minutes (per task):
 ```promql
-increase(snapshot_task_failed_total[5m]) by (namespace, snapshot_name, task_name) > 0
+sum by (namespace, snapshot_name, task_name) (increase(snapshot_task_failed_total[5m])) > 0
 ```
 
 - Any new failure in a namespace:

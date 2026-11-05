@@ -2,11 +2,96 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
+
+func TestDockerCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name, message, author string
+		pause, fail           bool
+		wantArgs              []string
+	}{
+		{
+			name:     "default options",
+			wantArgs: []string{"--debug", "commit", "--pause=false", "container-id", "registry.test/snapshot:tag"},
+		},
+		{
+			name: "options precede positional arguments", pause: true, message: "snapshot message", author: "snapshot author",
+			wantArgs: []string{
+				"--debug", "commit", "--pause=true", "--message", "snapshot message", "--author", "snapshot author",
+				"container-id", "registry.test/snapshot:tag",
+			},
+		},
+		{
+			name: "command failure includes commit context", fail: true,
+			wantArgs: []string{"--debug", "commit", "--pause=false", "container-id", "registry.test/snapshot:tag"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, recordedArgs := newRecordingRuntime(t, "--debug")
+			if tc.fail {
+				t.Setenv("SNAPSHOT_COMMAND_FAIL", "1")
+			}
+			err := rt.Commit(t.Context(), "container-id", "registry.test/snapshot:tag", tc.pause, tc.message, tc.author, false)
+			if tc.fail {
+				if err == nil || !strings.Contains(err.Error(), "commit image: exit status 1") {
+					t.Fatalf("expected contextual commit error, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if got := recordedArgs(); !slices.Equal(got, tc.wantArgs) {
+				t.Fatalf("commit arguments = %q, want %q", got, tc.wantArgs)
+			}
+		})
+	}
+}
+
+func TestImageExists(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail bool
+	}{{name: "image found"}, {name: "inspect failure", fail: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, recordedArgs := newRecordingRuntime(t)
+			if tc.fail {
+				t.Setenv("SNAPSHOT_COMMAND_FAIL", "1")
+			}
+			if got := rt.ImageExists(t.Context(), "registry.test/snapshot:tag"); got == tc.fail {
+				t.Fatalf("ImageExists = %t, want %t", got, !tc.fail)
+			}
+			want := []string{"image", "inspect", "registry.test/snapshot:tag"}
+			if got := recordedArgs(); !slices.Equal(got, want) {
+				t.Fatalf("inspect arguments = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestDockerConfigTempDirectoryFailure(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(tmpFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, tmpFile)
+	}
+	t.Setenv("DOCKER_CONFIG", "original-config")
+	rt := NewDockerCompatibleRuntime("must-not-run")
+	err := rt.Push(t.Context(), "registry.test/snapshot:tag", &Auth{ConfigJSON: `{}`}, true)
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || pathErr.Op != "mkdir" {
+		t.Fatalf("expected temporary directory creation error, got %v", err)
+	}
+	if got := os.Getenv("DOCKER_CONFIG"); got != "original-config" {
+		t.Fatalf("parent Docker config changed to %q", got)
+	}
+}
 
 // TestDockerConfigCommands 验证推拉命令直接读取凭据配置，不经过交互登录；
 // 子进程代替 Docker/nerdctl，因此不连接 daemon，也不写入真实镜像仓库。
@@ -19,11 +104,15 @@ func TestDockerConfigCommands(t *testing.T) {
 	for _, tc := range []struct {
 		name, config string
 		pull, fail   bool
+		insecure     bool
 	}{
 		{name: "unrelated credentials do not block push invocation", config: `{"auths":{"other.example":{"auth":"dXNlcjpwYXNz"}}}`},
 		{name: "pull preserves runtime arguments", config: `{"auths":{}}`, pull: true},
 		{name: "no secret keeps existing config"},
 		{name: "push failure is returned", config: `{"auths":{}}`, fail: true},
+		{name: "authenticated insecure push", config: `{"auths":{}}`, insecure: true},
+		{name: "authenticated insecure pull", config: `{"auths":{}}`, pull: true, insecure: true},
+		{name: "anonymous insecure push", insecure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -37,7 +126,11 @@ func TestDockerConfigCommands(t *testing.T) {
 			if tc.pull {
 				op = "pull"
 			}
-			args := []string{"--namespace", "k8s.io", op, "registry.example/repo:tag"}
+			args := []string{"--namespace", "k8s.io"}
+			if tc.insecure {
+				args = append(args, "--insecure-registry")
+			}
+			args = append(args, op, "registry.example/repo:tag")
 			if tc.pull {
 				args = append(args, "--unpack=false")
 			}
@@ -58,12 +151,15 @@ func TestDockerConfigCommands(t *testing.T) {
 			}
 			rt := NewDockerCompatibleRuntime(exe, "-test.run=^TestDockerRuntimeHelper$", "--", "--namespace", "k8s.io")
 			if tc.pull {
-				err = rt.Pull(t.Context(), "registry.example/repo:tag", auth, "--unpack=false")
+				err = rt.Pull(t.Context(), "registry.example/repo:tag", auth, tc.insecure, "--unpack=false")
 			} else {
-				err = rt.Push(t.Context(), "registry.example/repo:tag", auth)
+				err = rt.Push(t.Context(), "registry.example/repo:tag", auth, tc.insecure)
 			}
 			if (err != nil) != tc.fail {
 				t.Fatalf("command error = %v, want failure = %v", err, tc.fail)
+			}
+			if os.Getenv("DOCKER_CONFIG") != dir {
+				t.Fatal("runtime changed the parent process Docker config")
 			}
 			used, err := os.ReadFile(filepath.Join(dir, "result"))
 			if err != nil {

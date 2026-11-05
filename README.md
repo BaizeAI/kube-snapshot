@@ -47,6 +47,21 @@ kubectl apply -k config/samples/
 
 >**NOTE**: Ensure that the samples has default values to test it out.
 
+### Allow insecure registries for snapshots
+
+Set `spec.imageSaveOptions.insecureRegistry: true` to allow nerdctl to skip HTTPS certificate verification and fall back to HTTP during a snapshot. This applies to source image pulls, including layers fetched by `nerdctl commit`, and to snapshot pushes. Registry credentials are read directly from the configured Docker Secret without an interactive login. The option defaults to `false`.
+
+```yaml
+spec:
+  triggerRound: 7
+  imageSaveOptions:
+    insecureRegistry: true
+```
+
+For later rounds, patch `triggerRound` alone. Set `insecureRegistry: false` or remove the field to disable it for new tasks.
+
+When creating a `SnapshotPodTask` directly, use `spec.insecureRegistry: true` for the same behavior. Image pulls for Pods, including restored Pods, use the node's container runtime configuration.
+
 ### To Uninstall
 **Delete the instances (CRs) from the cluster:**
 

@@ -57,6 +57,9 @@ type ImageSaveOptions struct {
 	// tag - the tag of origin image, if not set, will be latest, if use sha format image like nginx@sha256:abcdef, tag will be the real sha value like abcdef
 	ImageRefFormat    string `json:"imageRefFormat,omitempty"`
 	RegistrySecretRef string `json:"registrySecretRef,omitempty"`
+	// InsecureRegistry allows nerdctl to skip HTTPS certificate verification and fall back to HTTP when pulling the source image or pushing the snapshot.
+	// +optional
+	InsecureRegistry bool `json:"insecureRegistry,omitempty"`
 	// AppendSnappedSuffix controls whether to append "-snapped" suffix to the image tag.
 	// If true, the suffix will be added; if false, no suffix will be added.
 	// +optional

@@ -111,11 +111,12 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return err
 	}
+	insecureRegistry := rtName == containerdRuntime && spt.Spec.InsecureRegistry
 	if rtName == containerdRuntime {
 		// see https://github.com/containerd/nerdctl/issues/3026
 		// we just force pull the image from the origin registry
 		a, _ := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.OriginRegistrySecretRef)
-		_ = rt.Pull(ctx, spt.Spec.OriginImage, a, "--unpack=false")
+		_ = rt.Pull(ctx, spt.Spec.OriginImage, a, insecureRegistry, "--unpack=false")
 	}
 
 	// Extract image registry for metrics label
@@ -124,7 +125,7 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 		registry = reference.Domain(ref.DockerReference())
 	}
 
-	err = rt.Push(ctx, spt.Spec.CommitImage, auth)
+	err = rt.Push(ctx, spt.Spec.CommitImage, auth, insecureRegistry)
 	if err != nil {
 		metrics.RecordImagePush(metrics.ImagePushResultFailed, registry, spt.Namespace, snapshotName, time.Since(startTime))
 		return err
@@ -135,7 +136,7 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 }
 
 func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *snapshotpodv1alpha1.SnapshotPodTask) error {
-	_, rt, cid, err := r.getRuntimeAndContainerID(spt.Spec.ContainerID)
+	rtName, rt, cid, err := r.getRuntimeAndContainerID(spt.Spec.ContainerID)
 	if err != nil {
 		return err
 	}
@@ -149,7 +150,10 @@ func (r *SnapshotPodTaskReconciler) reconcileCommit(ctx context.Context, spt *sn
 	}
 	ctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
-	err = rt.Commit(ctx, cid, spt.Spec.CommitImage, spt.Spec.CommitOptions.PauseContainer, spt.Spec.CommitOptions.Message, spt.Spec.CommitOptions.Author)
+	// nerdctl commit may fetch missing source image layers.
+	insecureRegistry := rtName == containerdRuntime && spt.Spec.InsecureRegistry
+	err = rt.Commit(ctx, cid, spt.Spec.CommitImage, spt.Spec.CommitOptions.PauseContainer,
+		spt.Spec.CommitOptions.Message, spt.Spec.CommitOptions.Author, insecureRegistry)
 	return err
 }
 
@@ -337,9 +341,8 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{RequeueAfter: retryDelay}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *SnapshotPodTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	containerdCompatibleRuntime, err := criruntime.NewContainerdCompatibleRuntime("nerdctl", "--debug", "-n", "k8s.io")
+func (r *SnapshotPodTaskReconciler) setupRuntimes(newContainerdRuntime func(string, ...string) (criruntime.Runtime, error)) error {
+	containerdCompatibleRuntime, err := newContainerdRuntime("nerdctl", "--debug", "-n", "k8s.io")
 	if err != nil {
 		return fmt.Errorf("failed to create containerd compatible runtime: %w", err)
 	}
@@ -348,6 +351,18 @@ func (r *SnapshotPodTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		containerdRuntime: containerdCompatibleRuntime,
 		// for kind
 		// containerdRuntime: criruntime.NewDockerCompatibleRuntime("docker", "exec", "-i", "kind-control-plane", "nerdctl", "-n", "k8s.io"),
+	}
+	return nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *SnapshotPodTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return r.setupWithManager(mgr, criruntime.NewContainerdCompatibleRuntime)
+}
+
+func (r *SnapshotPodTaskReconciler) setupWithManager(mgr ctrl.Manager, newContainerdRuntime func(string, ...string) (criruntime.Runtime, error)) error {
+	if err := r.setupRuntimes(newContainerdRuntime); err != nil {
+		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&snapshotpodv1alpha1.SnapshotPodTask{}).

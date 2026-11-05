@@ -258,6 +258,7 @@ func (r *SnapshotPodReconciler) reconcileTasks(
 				OriginImage:       pending.status.Image,
 				CommitImage:       pending.image,
 				RegistrySecretRef: secretRef,
+				InsecureRegistry:  sp.Spec.ImageSaveOptions.InsecureRegistry,
 				MaxRetries:        sp.Spec.ImageSaveOptions.MaxRetries,
 				RetryDelaySeconds: sp.Spec.ImageSaveOptions.RetryDelaySeconds,
 			},

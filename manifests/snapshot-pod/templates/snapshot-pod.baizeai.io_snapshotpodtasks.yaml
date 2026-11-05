@@ -76,6 +76,11 @@ spec:
                 type: object
               containerID:
                 type: string
+              insecureRegistry:
+                description: InsecureRegistry allows nerdctl to skip HTTPS certificate
+                  verification and fall back to HTTP when pulling the source image
+                  or pushing the snapshot.
+                type: boolean
               maxRetries:
                 default: 3
                 description: MaxRetries defines the maximum number of retries when

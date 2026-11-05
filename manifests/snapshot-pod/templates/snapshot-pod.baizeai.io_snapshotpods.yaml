@@ -100,6 +100,11 @@ spec:
                       last_repository - the last part repository, like baize-ui
                       tag - the tag of origin image, if not set, will be latest, if use sha format image like nginx@sha256:abcdef, tag will be the real sha value like abcdef
                     type: string
+                  insecureRegistry:
+                    description: InsecureRegistry allows nerdctl to skip HTTPS certificate
+                      verification and fall back to HTTP when pulling the source image
+                      or pushing the snapshot.
+                    type: boolean
                   maxRetries:
                     default: 3
                     description: MaxRetries defines the maximum number of retries

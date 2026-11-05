@@ -69,7 +69,7 @@ func NewContainerdCompatibleRuntime(cmd string, globalArgs ...string) (Runtime, 
 	}, nil
 }
 
-func (c *containerdCompatibleRuntime) Commit(ctx context.Context, containerID, image string, pause bool, message, author string) error {
+func (c *containerdCompatibleRuntime) Commit(ctx context.Context, containerID, image string, pause bool, message, author string, insecureRegistry bool) error {
 	args := []string{"commit", containerID, image, fmt.Sprintf("--pause=%v", pause)}
 	if message != "" {
 		args = append(args, "--message", message)
@@ -80,5 +80,5 @@ func (c *containerdCompatibleRuntime) Commit(ctx context.Context, containerID, i
 	if c.IsNerdctlVersionSufficient && c.IsContainerdVersionSufficient {
 		args = append(args, "--compression", string(types.Zstd))
 	}
-	return c.execCommand(ctx, args)
+	return c.execCommand(ctx, args, insecureRegistry)
 }

@@ -3,7 +3,6 @@ package runtime
 import "context"
 
 type Auth struct {
-	Registry   string
 	ConfigJSON string
 }
 

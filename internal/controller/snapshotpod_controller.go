@@ -19,18 +19,18 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/containers/image/v5/docker"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/google/uuid"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-
-	"github.com/containers/image/v5/docker"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,22 +38,24 @@ import (
 
 	snapshotpodv1alpha1 "github.com/baizeai/kube-snapshot/api/v1alpha1"
 	"github.com/baizeai/kube-snapshot/internal/metrics"
-	"github.com/baizeai/kube-snapshot/pkg/apis/snapshotpod/v1alpha1"
+	snapshotpodpkgv1alpha1 "github.com/baizeai/kube-snapshot/pkg/apis/snapshotpod/v1alpha1"
+	"github.com/baizeai/kube-snapshot/pkg/imagetag"
 )
 
-// SnapshotPodReconciler reconciles a SnapshotPod object
+// SnapshotPodReconciler 按触发轮次创建各容器的快照任务，并汇总任务执行结果。
 type SnapshotPodReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
+// getPod 优先按名称读取目标；使用标签选择器时，必须唯一匹配一个 Running Pod。
 func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) (*corev1.Pod, error) {
 	if sp.Spec.Target.Name == "" && sp.Spec.Target.Selector == nil {
 		return nil, fmt.Errorf("target pod name or selector is required")
 	}
 	if sp.Spec.Target.Name != "" {
 		pod := corev1.Pod{}
-		err := r.Client.Get(ctx, client.ObjectKey{
+		err := r.Get(ctx, client.ObjectKey{
 			Namespace: sp.Namespace,
 			Name:      sp.Spec.Target.Name,
 		}, &pod)
@@ -61,7 +63,7 @@ func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alp
 	}
 	if sp.Spec.Target.Selector != nil {
 		podList := corev1.PodList{}
-		err := r.Client.List(ctx, &podList, &client.ListOptions{
+		err := r.List(ctx, &podList, &client.ListOptions{
 			LabelSelector: labels.SelectorFromSet(sp.Spec.Target.Selector),
 			Namespace:     sp.Namespace,
 		})
@@ -92,129 +94,257 @@ func (r *SnapshotPodReconciler) getPod(ctx context.Context, sp *snapshotpodv1alp
 	return nil, fmt.Errorf("target selector not specified")
 }
 
-func (r *SnapshotPodReconciler) validate(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
-	if sp.Status.LastTriggerRound == sp.Spec.TriggerRound {
-		return nil
-	}
-	// validate
-	pod, err := r.getPod(ctx, sp)
-	if err != nil {
-		return err
+// selectedContainers 优先使用本轮请求固定的容器清单，否则沿用旧配置的选择范围。
+// 只有需要从 Pod 推导全部普通容器时，调用方才必须提供非 nil 的 pod。
+func selectedContainers(pod *corev1.Pod, sp *snapshotpodv1alpha1.SnapshotPod, request *snapshotpodpkgv1alpha1.RoundRequest) []string {
+	if request != nil {
+		// 排序消除 map 遍历顺序的不确定性，使补建任务及记录状态的顺序稳定。
+		return slices.Sorted(maps.Keys(request.Images))
 	}
 	if len(sp.Spec.Target.Containers) != 0 {
-		if len(lo.Without(sp.Spec.Target.Containers, lo.Map(pod.Spec.Containers, func(item corev1.Container, index int) string {
-			return item.Name
-		})...)) != 0 {
-			return fmt.Errorf("containers %v not valid", sp.Spec.Target.Containers)
-		}
+		return slices.Clone(sp.Spec.Target.Containers)
 	}
-	return nil
+	return lo.Map(pod.Spec.Containers, func(item corev1.Container, _ int) string {
+		return item.Name
+	})
 }
 
+// snapshotPodOwner 为任务建立控制器归属，用于所有权校验及随 SnapshotPod 级联删除。
 func snapshotPodOwner(s *snapshotpodv1alpha1.SnapshotPod) metav1.OwnerReference {
 	return *metav1.NewControllerRef(s, snapshotpodv1alpha1.GroupVersion.WithKind("SnapshotPod"))
 }
 
-func (r *SnapshotPodReconciler) reconcileTasks(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
-	if sp.Status.LastTriggerRound == sp.Spec.TriggerRound {
-		return nil
+// reconcileTasks 复用本轮已有任务，先准备所有缺失任务的输入，再逐个补建并记录实际镜像。
+// LastTriggerRound 仅表示任务准备完成，不表示 commit 或 push 已成功。
+func (r *SnapshotPodReconciler) reconcileTasks(
+	ctx context.Context,
+	sp *snapshotpodv1alpha1.SnapshotPod,
+	request *snapshotpodpkgv1alpha1.RoundRequest,
+	pod *corev1.Pod,
+) error {
+	if pod == nil && request == nil && len(sp.Spec.Target.Containers) == 0 {
+		// 旧协议若未显式选择容器，Pod 删除后就无法还原预期清单。
+		// 此时只对已标记准备完成的轮次沿用旧行为；执行结果仍由 TaskStatus 同步。
+		if sp.Status.LastTriggerRound == sp.Spec.TriggerRound {
+			return nil
+		}
+		return fmt.Errorf("target Pod was not loaded for trigger round %d; container scope is unknown", sp.Spec.TriggerRound)
 	}
-	if lo.ContainsBy(sp.Status.Snapshots, func(item snapshotpodv1alpha1.SnapshotRunningStatus) bool {
-		return item.TriggerRound == sp.Spec.TriggerRound
-	}) {
-		// already exists, skip
-		sp.Status.LastTriggerRound = sp.Spec.TriggerRound
-		return nil
+	containers := selectedContainers(pod, sp, request)
+
+	taskList := snapshotpodv1alpha1.SnapshotPodTaskList{}
+	if err := r.List(ctx, &taskList, client.InNamespace(sp.Namespace), client.MatchingLabels{
+		snapshotpodpkgv1alpha1.SnapshotNameLabel: sp.Name,
+	}); err != nil {
+		return fmt.Errorf("list snapshot tasks: %w", err)
 	}
-	pod, err := r.getPod(ctx, sp)
-	if err != nil {
-		return err
+	tasks := make(map[string]snapshotpodv1alpha1.SnapshotPodTask, len(taskList.Items))
+	for _, task := range taskList.Items {
+		tasks[task.Name] = task
 	}
-	containers := lo.Map(pod.Spec.Containers, func(item corev1.Container, index int) string {
-		return item.Name
-	})
-	if len(sp.Spec.Target.Containers) != 0 {
-		containers = sp.Spec.Target.Containers
+
+	type pendingTask struct {
+		container string
+		image     string
+		status    corev1.ContainerStatus
 	}
-	for _, c := range containers {
-		css := lo.Filter(pod.Status.ContainerStatuses, func(item corev1.ContainerStatus, index int) bool {
-			return item.Name == c
+	missing := make([]pendingTask, 0, len(containers))
+	var missingPod bool
+	for _, container := range containers {
+		name := fmt.Sprintf("%s-%d-%s", sp.Name, sp.Spec.TriggerRound, container)
+		if task, ok := tasks[name]; ok {
+			// 已有任务的输入已固定，恢复状态不再依赖源 Pod 或容器仍然存在。
+			if !metav1.IsControlledBy(&task, sp) {
+				return fmt.Errorf("snapshot task %s/%s is not owned by SnapshotPod %s", task.Namespace, task.Name, sp.Name)
+			}
+			if request != nil {
+				// 同轮请求与真实任务冲突时显式报错，避免将其他目标误记为本次请求已执行。
+				if task.Spec.CommitImage != request.Images[container] {
+					return fmt.Errorf("snapshot task %s already targets %s, not requested image %s", task.Name, task.Spec.CommitImage, request.Images[container])
+				}
+				if task.Annotations[snapshotpodpkgv1alpha1.RestoreCredentialSourceAnnotation] != snapshotpodpkgv1alpha1.RestoreCredentialSourceTask {
+					return fmt.Errorf("snapshot task %s lacks round-specific credential metadata", task.Name)
+				}
+			}
+			upsertSnapshotRun(sp, container, task)
+			continue
+		}
+		if pod == nil {
+			missingPod = true
+			continue
+		}
+		if !slices.ContainsFunc(pod.Spec.Containers, func(item corev1.Container) bool {
+			return item.Name == container
+		}) {
+			return fmt.Errorf("container %q not found in pod %s/%s", container, pod.Namespace, pod.Name)
+		}
+		status, ok := lo.Find(pod.Status.ContainerStatuses, func(item corev1.ContainerStatus) bool {
+			return item.Name == container
 		})
-		if len(css) == 0 {
-			return fmt.Errorf("container status of %s/%s/%s not found", pod.Namespace, pod.Name, c)
+		if !ok {
+			return fmt.Errorf("container status of %s/%s/%s not found", pod.Namespace, pod.Name, container)
 		}
-		cs := css[0]
-		if cs.ContainerID == "" {
-			return fmt.Errorf("container %s not started", c)
-		}
-
-		// Get appendSnappedSuffix value, default to true if not specified
-		appendSnappedSuffix := true
-		if sp.Spec.ImageSaveOptions.AppendSnappedSuffix != nil {
-			appendSnappedSuffix = *sp.Spec.ImageSaveOptions.AppendSnappedSuffix
+		if status.ContainerID == "" {
+			return fmt.Errorf("container %s not started", container)
 		}
 
-		newImage, err := renderNewImageName(cs.Image, sp.Spec.ImageSaveOptions.ImageRefFormat, appendSnappedSuffix)
-		if err != nil {
-			return err
+		var image string
+		if request != nil {
+			// 本轮请求已固定最终地址；仅校验而不重新命名，保证与调用方预检使用相同目标。
+			image = request.Images[container]
+			parsed, err := docker.ParseReference("//" + image)
+			if err != nil {
+				return fmt.Errorf("invalid requested image for container %s: %w", container, err)
+			}
+			if _, ok := parsed.DockerReference().(reference.NamedTagged); !ok {
+				return fmt.Errorf("requested image for container %s must include a tag", container)
+			}
+		} else {
+			// 没有本轮请求时沿用长期模板；只有模板包含 {tag} 才会继承源容器镜像的版本。
+			appendSuffix := true
+			if sp.Spec.ImageSaveOptions.AppendSnappedSuffix != nil {
+				appendSuffix = *sp.Spec.ImageSaveOptions.AppendSnappedSuffix
+			}
+			var err error
+			image, err = imagetag.ResolveImageRef(status.Image, sp.Spec.ImageSaveOptions.ImageRefFormat, imagetag.Options{
+				ContainerCount:      len(containers),
+				AppendSnappedSuffix: appendSuffix,
+			})
+			if err != nil {
+				return fmt.Errorf("resolve snapshot image for container %s: %w", container, err)
+			}
 		}
-		spt := snapshotpodv1alpha1.SnapshotPodTask{
+		missing = append(missing, pendingTask{container: container, image: image, status: status})
+	}
+	if missingPod {
+		return fmt.Errorf("target Pod was not loaded for trigger round %d; missing tasks cannot be created", sp.Spec.TriggerRound)
+	}
+
+	// 所有缺失容器的输入齐备后才开始创建，避免输入错误造成不必要的半成品轮次。
+	// API 创建中途失败仍可能留下部分任务，下次调谐会复用它们并补齐其余任务。
+	for _, pending := range missing {
+		container := pending.container
+		annotations := map[string]string(nil)
+		if request != nil {
+			annotations = maps.Clone(request.TaskAnnotations[container])
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+			// 恢复时凭此标记读取任务中的 Secret 引用；未标记的旧任务仍使用长期配置。
+			annotations[snapshotpodpkgv1alpha1.RestoreCredentialSourceAnnotation] = snapshotpodpkgv1alpha1.RestoreCredentialSourceTask
+		}
+		secretRef := sp.Spec.ImageSaveOptions.RegistrySecretRef
+		if request != nil {
+			// 协议入口已校验指针非 nil；显式空字符串表示本轮不指定凭据，不回退长期值。
+			secretRef = *request.RegistrySecretRef
+		}
+		task := snapshotpodv1alpha1.SnapshotPodTask{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: sp.Namespace,
-				Name:      fmt.Sprintf("%s-%d-%s", sp.Name, sp.Spec.TriggerRound, c),
+				Name:      fmt.Sprintf("%s-%d-%s", sp.Name, sp.Spec.TriggerRound, container),
 				OwnerReferences: []metav1.OwnerReference{
 					snapshotPodOwner(sp),
 				},
 				Labels: map[string]string{
-					v1alpha1.SnapshotNameLabel: sp.Name,
+					snapshotpodpkgv1alpha1.SnapshotNameLabel: sp.Name,
 				},
+				Annotations: annotations,
 			},
 			Spec: snapshotpodv1alpha1.SnapshotPodTaskSpec{
 				NodeName:          pod.Spec.NodeName,
 				PodName:           pod.Name,
-				ContainerID:       cs.ContainerID,
+				ContainerID:       pending.status.ContainerID,
 				CommitOptions:     sp.Spec.CommitOptions,
-				OriginImage:       cs.Image,
-				CommitImage:       newImage,
-				RegistrySecretRef: sp.Spec.ImageSaveOptions.RegistrySecretRef,
+				OriginImage:       pending.status.Image,
+				CommitImage:       pending.image,
+				RegistrySecretRef: secretRef,
 				MaxRetries:        sp.Spec.ImageSaveOptions.MaxRetries,
 				RetryDelaySeconds: sp.Spec.ImageSaveOptions.RetryDelaySeconds,
 			},
-			Status: snapshotpodv1alpha1.SnapshotPodTaskStatus{},
 		}
-		err = r.Client.Create(ctx, &spt)
-		if err != nil && !errors.IsAlreadyExists(err) {
-			return err
+		if err := r.Create(ctx, &task); err != nil {
+			if !errors.IsAlreadyExists(err) {
+				return err
+			}
+			// List 缓存可能尚未看到任务；读取已存在的真实对象，避免记录未被采用的本地输入。
+			if err := r.Get(ctx, client.ObjectKeyFromObject(&task), &task); err != nil {
+				return fmt.Errorf("get existing snapshot task %s: %w", task.Name, err)
+			}
 		}
-		sp.Status.Snapshots = append(sp.Status.Snapshots, snapshotpodv1alpha1.SnapshotRunningStatus{
-			TriggerRound: sp.Spec.TriggerRound,
-			TriggerTime: metav1.Time{
-				Time: time.Now(),
-			},
-			TaskName:      spt.Name,
-			ImageRef:      spt.Spec.CommitImage,
-			ContainerName: c,
-			Result:        snapshotpodv1alpha1.SnapshotRunningResultCreated,
-		})
-		// only keep last 20 snapshots
-		if len(sp.Status.Snapshots) > 20 {
-			sp.Status.Snapshots = sp.Status.Snapshots[len(sp.Status.Snapshots)-5:]
+		if !metav1.IsControlledBy(&task, sp) {
+			return fmt.Errorf("snapshot task %s/%s is not owned by SnapshotPod %s", task.Namespace, task.Name, sp.Name)
 		}
+		if request != nil &&
+			(task.Spec.CommitImage != pending.image ||
+				task.Annotations[snapshotpodpkgv1alpha1.RestoreCredentialSourceAnnotation] != snapshotpodpkgv1alpha1.RestoreCredentialSourceTask) {
+			return fmt.Errorf("existing snapshot task %s does not match the current round request", task.Name)
+		}
+		tasks[task.Name] = task
+		upsertSnapshotRun(sp, container, task)
 	}
+
+	sp.Status.Snapshots = compactSnapshotRuns(sp.Status.Snapshots, sp.Spec.TriggerRound)
+	// 仅在所有预期任务均存在且 runs 已补齐后推进标记，随本次 Status.Update 一起持久化。
+	sp.Status.LastTriggerRound = sp.Spec.TriggerRound
 	return nil
 }
 
+// upsertSnapshotRun 按本轮轮次和容器更新记录，镜像始终取真实任务的 CommitImage。
+// 任务与镜像未变化时保留原结果和时间，避免重复调谐将终态重置为 CREATED。
+func upsertSnapshotRun(sp *snapshotpodv1alpha1.SnapshotPod, container string, task snapshotpodv1alpha1.SnapshotPodTask) {
+	for index := range sp.Status.Snapshots {
+		run := &sp.Status.Snapshots[index]
+		if run.TriggerRound != sp.Spec.TriggerRound || run.ContainerName != container {
+			continue
+		}
+		if run.TaskName == task.Name && run.ImageRef == task.Spec.CommitImage {
+			return
+		}
+		*run = snapshotpodv1alpha1.SnapshotRunningStatus{
+			TriggerRound:  sp.Spec.TriggerRound,
+			TriggerTime:   metav1.Now(),
+			TaskName:      task.Name,
+			ImageRef:      task.Spec.CommitImage,
+			ContainerName: container,
+			Result:        snapshotpodv1alpha1.SnapshotRunningResultCreated,
+		}
+		return
+	}
+	sp.Status.Snapshots = append(sp.Status.Snapshots, snapshotpodv1alpha1.SnapshotRunningStatus{
+		TriggerRound:  sp.Spec.TriggerRound,
+		TriggerTime:   metav1.Now(),
+		TaskName:      task.Name,
+		ImageRef:      task.Spec.CommitImage,
+		ContainerName: container,
+		Result:        snapshotpodv1alpha1.SnapshotRunningResultCreated,
+	})
+}
+
+// compactSnapshotRuns 超过 20 条记录时保留末尾最多 5 条历史记录及当前轮全部记录。
+// 当前轮容器较多时允许超过历史裁剪阈值，避免丢失本轮任务准备完整性的判断依据。
+func compactSnapshotRuns(runs []snapshotpodv1alpha1.SnapshotRunningStatus, currentRound int32) []snapshotpodv1alpha1.SnapshotRunningStatus {
+	if len(runs) <= 20 {
+		return runs
+	}
+	history := lo.Filter(runs, func(run snapshotpodv1alpha1.SnapshotRunningStatus, _ int) bool {
+		return run.TriggerRound != currentRound
+	})
+	current := lo.Filter(runs, func(run snapshotpodv1alpha1.SnapshotRunningStatus, _ int) bool {
+		return run.TriggerRound == currentRound
+	})
+	if len(history) > 5 {
+		history = history[len(history)-5:]
+	}
+	return append(history, current...)
+}
+
+// reconcileTasksStatus 从同命名空间的任务同步已有运行记录，无需读取源 Pod。
+// 只有任务进入最终 Completed 或 Failed 阶段才记录终态，不将准备完成视为保存成功。
 func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
 	sptList := snapshotpodv1alpha1.SnapshotPodTaskList{}
-	selector, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			v1alpha1.SnapshotNameLabel: sp.Name,
-		},
-	})
-	err := r.Client.List(ctx, &sptList, &client.ListOptions{
-		LabelSelector: selector,
-	})
-	if err != nil {
+	if err := r.List(ctx, &sptList, client.InNamespace(sp.Namespace), client.MatchingLabels{
+		snapshotpodpkgv1alpha1.SnapshotNameLabel: sp.Name,
+	}); err != nil {
 		return err
 	}
 	sptMap := lo.SliceToMap(sptList.Items, func(item snapshotpodv1alpha1.SnapshotPodTask) (string, snapshotpodv1alpha1.SnapshotPodTask) {
@@ -249,85 +379,18 @@ func (r *SnapshotPodReconciler) reconcileTasksStatus(ctx context.Context, sp *sn
 	return nil
 }
 
-func withRandomTag(tag string, appendSnappedSuffix bool) string {
-	if !appendSnappedSuffix {
-		return tag
-	}
-
-	if strings.Contains(tag, "snapped-") {
-		return tag
-	}
-
-	suffix := fmt.Sprintf("snapped-%d-%s", time.Now().Unix(), strings.ReplaceAll(uuid.New().String(), "-", "")[:8])
-
-	if tag == "" || tag == "latest" {
-		return suffix
-	}
-
-	return fmt.Sprintf("%s-%s", tag, suffix)
-}
-
-func renderNewImageName(originImage, format string, appendSnappedSuffix bool) (string, error) {
-	ref, err := docker.ParseReference("//" + originImage)
-	if err != nil {
-		return "", err
-	}
-	r := ref.DockerReference()
-	domain := reference.Domain(r)
-	p := reference.Path(r)
-	tag := ""
-	switch v := r.(type) {
-	case reference.NamedTagged:
-		tag = v.Tag()
-	case reference.Canonical:
-		tag = v.Digest().Hex()
-	}
-	lr, _ := lo.Last(strings.Split(p, "/"))
-	m := map[string]string{
-		"domain":          domain,
-		"repository":      p,
-		"last_repository": lr,
-		"tag":             tag,
-	}
-	for k, v := range m {
-		format = strings.ReplaceAll(format, fmt.Sprintf("{%s}", k), v)
-	}
-	ref, err = docker.ParseReference("//" + format)
-	if err != nil {
-		return "", err
-	}
-	newTag := ""
-	if v, ok := ref.DockerReference().(reference.NamedTagged); !ok {
-		newTag = withRandomTag("", appendSnappedSuffix)
-	} else {
-		newTag = withRandomTag(v.Tag(), appendSnappedSuffix)
-	}
-	v, err := reference.WithTag(ref.DockerReference(), newTag)
-	if err != nil {
-		return "", err
-	}
-	format = v.String()
-	return format, nil
-}
-
 // +kubebuilder:rbac:groups=snapshot-pod.baizeai.io,resources=snapshotpods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=snapshot-pod.baizeai.io,resources=snapshotpods/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=snapshot-pod.baizeai.io,resources=snapshotpods/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// the SnapshotPod object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.2/pkg/reconcile
+// Reconcile 依次执行请求接纳、任务准备及结果同步，并将阶段错误写入 Conditions。
+// 准备失败时仍同步已有任务结果，后续调谐再尝试补齐缺失任务。
 func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	startTime := time.Now()
 	logger := log.FromContext(ctx)
 
 	sp := snapshotpodv1alpha1.SnapshotPod{}
-	err := r.Client.Get(ctx, req.NamespacedName, &sp)
+	err := r.Get(ctx, req.NamespacedName, &sp)
 	if err != nil {
 		logger.Error(err, "get instance error")
 		metrics.RecordControllerError("snapshotpod", "get_instance_error")
@@ -337,6 +400,20 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if sp.Spec.TriggerRound <= 0 {
 		return ctrl.Result{}, nil
 	}
+	var roundRequest *snapshotpodpkgv1alpha1.RoundRequest
+	var roundRequestErr error
+	// 注解在入口解码一次，仅匹配当前轮次时生效。旧轮次继续走长期配置；
+	// 损坏或超前的请求保留错误交给 Accept 阶段，不能静默切换目标。
+	if raw, ok := sp.Annotations[snapshotpodpkgv1alpha1.RoundRequestAnnotation]; ok {
+		request, decodeErr := snapshotpodpkgv1alpha1.DecodeRoundRequest(raw, sp.Spec.TriggerRound)
+		if decodeErr != nil {
+			roundRequestErr = decodeErr
+		} else if request.Round == sp.Spec.TriggerRound {
+			roundRequest = &request
+		}
+	}
+	var targetPod *corev1.Pod
+	var targetPodErr error
 	type reconciler func(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error
 	type rec struct {
 		typ string
@@ -345,18 +422,39 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	recs := []rec{
 		{
 			typ: "Accept",
-			r:   r.validate,
+			r: func(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
+				if roundRequestErr != nil {
+					return roundRequestErr
+				}
+				targetPod, targetPodErr = r.getPod(ctx, sp)
+				if targetPodErr != nil {
+					// 源 Pod 不可用不直接拒绝整轮，由 Tasks 判断是否确实还需要它补建任务。
+					targetPod = nil
+				}
+				return nil
+			},
 		},
 		{
 			typ: "Tasks",
-			r:   r.reconcileTasks,
+			r: func(ctx context.Context, sp *snapshotpodv1alpha1.SnapshotPod) error {
+				err := r.reconcileTasks(ctx, sp, roundRequest, targetPod)
+				if err != nil && targetPodErr != nil {
+					return fmt.Errorf("%w: %v", err, targetPodErr)
+				}
+				return err
+			},
 		},
 		{
 			typ: "TaskStatus",
 			r:   r.reconcileTasksStatus,
 		},
 	}
+	failed := false
 	for _, rec := range recs {
+		// 请求无效时不创建任务，但不能阻断已有任务的结果同步。
+		if failed && rec.typ != "TaskStatus" {
+			continue
+		}
 		_, i, ok := lo.FindIndexOf(sp.Status.Conditions, func(item metav1.Condition) bool {
 			return item.Type == rec.typ
 		})
@@ -375,15 +473,17 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			logger.Error(err, "run reconcile error", "type", rec.typ, "namespace", sp.Namespace, "name", sp.Name)
 			sp.Status.Conditions[i].Status = metav1.ConditionFalse
 			sp.Status.Conditions[i].Message = err.Error()
-			break
+			failed = true
 		} else {
 			sp.Status.Conditions[i].Status = metav1.ConditionTrue
+			sp.Status.Conditions[i].Message = ""
 		}
 		if !cmpConditionWithoutTime(old, sp.Status.Conditions[i]) {
-			// update LastTransitionTime if condition changed.
+			// 仅条件内容变化时更新时间，避免每轮调谐都改写该时间。
 			sp.Status.Conditions[i].LastTransitionTime = metav1.Now()
 		}
 	}
+	// 即使部分创建失败，也保存本次已恢复或新增的 runs；写入失败后可从真实任务重建。
 	if err := r.Status().Update(ctx, &sp); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -397,6 +497,7 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if find || lo.ContainsBy(sp.Status.Conditions, func(item metav1.Condition) bool {
 		return item.Status != metav1.ConditionTrue
 	}) {
+		// 未结束任务或未就绪阶段需要轮询；本控制器未注册任务或源 Pod 的事件监听。
 		metrics.RecordControllerReconcile("snapshotpod", metrics.ControllerResultRequeue, time.Since(startTime))
 		return ctrl.Result{RequeueAfter: time.Second * 15}, nil
 	}
@@ -405,11 +506,12 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
+// cmpConditionWithoutTime 比较条件的业务内容，忽略时间以判断是否需要更新时间。
 func cmpConditionWithoutTime(c1, c2 metav1.Condition) bool {
 	return c1.Status == c2.Status && c1.Message == c2.Message && c1.Reason == c2.Reason && c1.Type == c2.Type
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// SetupWithManager 注册 SnapshotPod 事件；任务进度由 Reconcile 定时查询。
 func (r *SnapshotPodReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&snapshotpodv1alpha1.SnapshotPod{}).

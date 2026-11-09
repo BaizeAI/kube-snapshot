@@ -80,5 +80,5 @@ func (c *containerdCompatibleRuntime) Commit(ctx context.Context, containerID, i
 	if c.IsNerdctlVersionSufficient && c.IsContainerdVersionSufficient {
 		args = append(args, "--compression", string(types.Zstd))
 	}
-	return c.execCommand(ctx, args, nil)
+	return c.execCommand(ctx, args)
 }

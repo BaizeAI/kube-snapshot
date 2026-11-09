@@ -64,7 +64,7 @@ func (r *SnapshotPodTaskReconciler) getRuntimeAndContainerID(containerID string)
 	return rtName, rt, cid, nil
 }
 
-func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, namespace, sec, image string) (*criruntime.Auth, error) {
+func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, namespace, sec string) (*criruntime.Auth, error) {
 	if sec == "" {
 		return nil, nil
 	}
@@ -76,12 +76,7 @@ func (r *SnapshotPodTaskReconciler) getImageAuthWithSecret(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	ref, err := docker.ParseReference("//" + image)
-	if err != nil {
-		return nil, err
-	}
 	a := criruntime.Auth{
-		Registry:   reference.Domain(ref.DockerReference()),
 		ConfigJSON: string(secret.Data[".dockerconfigjson"]),
 	}
 	return &a, nil
@@ -111,7 +106,7 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return fmt.Errorf("image %s not exists", spt.Spec.CommitImage)
 	}
-	auth, err := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.RegistrySecretRef, spt.Spec.CommitImage)
+	auth, err := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.RegistrySecretRef)
 	if err != nil {
 		metrics.RecordImagePush(metrics.ImagePushResultFailed, "unknown", spt.Namespace, snapshotName, time.Since(startTime))
 		return err
@@ -119,7 +114,7 @@ func (r *SnapshotPodTaskReconciler) reconcilePushImage(ctx context.Context, spt 
 	if rtName == containerdRuntime {
 		// see https://github.com/containerd/nerdctl/issues/3026
 		// we just force pull the image from the origin registry
-		a, _ := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.OriginRegistrySecretRef, spt.Spec.OriginImage)
+		a, _ := r.getImageAuthWithSecret(ctx, spt.Namespace, spt.Spec.OriginRegistrySecretRef)
 		_ = rt.Pull(ctx, spt.Spec.OriginImage, a, "--unpack=false")
 	}
 
@@ -179,7 +174,7 @@ func (r *SnapshotPodTaskReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	logger := log.FromContext(ctx)
 
 	spt := snapshotpodv1alpha1.SnapshotPodTask{}
-	err := r.Client.Get(ctx, req.NamespacedName, &spt)
+	err := r.Get(ctx, req.NamespacedName, &spt)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil

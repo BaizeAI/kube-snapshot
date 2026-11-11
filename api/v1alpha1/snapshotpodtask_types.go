@@ -31,6 +31,10 @@ type SnapshotPodTaskSpec struct {
 	CommitImage             string        `json:"commitImage,omitempty"`
 	RegistrySecretRef       string        `json:"registrySecretRef,omitempty"`
 
+	// InsecureRegistry allows nerdctl to skip HTTPS certificate verification and fall back to HTTP when pulling the source image or pushing the snapshot.
+	// +optional
+	InsecureRegistry bool `json:"insecureRegistry,omitempty"`
+
 	// MaxRetries defines the maximum number of retries when the task fails
 	// +optional
 	// +kubebuilder:default:=3

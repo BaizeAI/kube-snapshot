@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 
 	"k8s.io/klog/v2"
 )
@@ -23,7 +25,7 @@ func NewDockerCompatibleRuntime(cmd string, globalArgs ...string) Runtime {
 	}
 }
 
-func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID, image string, pause bool, message, author string) error {
+func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID, image string, pause bool, message, author string, insecureRegistry bool) error {
 	args := []string{"commit", fmt.Sprintf("--pause=%v", pause)}
 	if message != "" {
 		args = append(args, "--message", message)
@@ -32,25 +34,25 @@ func (d *dockerCompatibleRuntime) Commit(ctx context.Context, containerID, image
 		args = append(args, "--author", author)
 	}
 	args = append(args, containerID, image)
-	if err := d.execCommand(ctx, args); err != nil {
+	if err := d.execCommand(ctx, args, insecureRegistry); err != nil {
 		return fmt.Errorf("commit image: %s", err)
 	}
 	return nil
 }
 
 func (d *dockerCompatibleRuntime) ImageExists(ctx context.Context, image string) bool {
-	err := d.execCommand(ctx, []string{"image", "inspect", image})
+	err := d.execCommand(ctx, []string{"image", "inspect", image}, false)
 	return err == nil
 }
 
 // Pull 使用提供的 Docker 配置拉取镜像，保留 nerdctl 等运行时的附加参数。
-func (d *dockerCompatibleRuntime) Pull(ctx context.Context, image string, auth *Auth, args ...string) error {
-	return d.withDockerConfig(ctx, auth, append([]string{"pull", image}, args...))
+func (d *dockerCompatibleRuntime) Pull(ctx context.Context, image string, auth *Auth, insecureRegistry bool, args ...string) error {
+	return d.withDockerConfig(ctx, auth, insecureRegistry, append([]string{"pull", image}, args...))
 }
 
 // Push 由运行时按目标仓库选择配置中的凭据，或尝试匿名推送。
-func (d *dockerCompatibleRuntime) Push(ctx context.Context, image string, auth *Auth) error {
-	return d.withDockerConfig(ctx, auth, []string{"push", image})
+func (d *dockerCompatibleRuntime) Push(ctx context.Context, image string, auth *Auth, insecureRegistry bool) error {
+	return d.withDockerConfig(ctx, auth, insecureRegistry, []string{"push", image})
 }
 
 // withDockerConfig 临时写入 Secret 中的 Docker 配置，供 Docker 和 nerdctl 直接读取。
@@ -59,25 +61,34 @@ func (d *dockerCompatibleRuntime) Push(ctx context.Context, image string, auth *
 // 若配置没有目标仓库凭据但仓库允许匿名访问，预先 login 可能转入用户名/密码交互；
 // runner 没有 TTY，因而会在 push/pull 尚未尝试前失败。直接推拉则可使用匹配凭据，
 // 或由仓库按实际权限返回匿名访问结果/认证错误，避免把交互式 login 错误误作推拉结果。
-func (d *dockerCompatibleRuntime) withDockerConfig(ctx context.Context, auth *Auth, args []string) error {
+func (d *dockerCompatibleRuntime) withDockerConfig(ctx context.Context, auth *Auth, insecureRegistry bool, args []string) error {
+	var env []string
+	run := func(args []string) error {
+		return d.execCommand(ctx, args, insecureRegistry, env...)
+	}
 	if auth == nil {
-		return d.execCommand(ctx, args)
+		return run(args)
 	}
 	tmp, err := os.MkdirTemp("", ".docker-config-*")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	os.Setenv("DOCKER_CONFIG", tmp)
-	defer os.Unsetenv("DOCKER_CONFIG")
-	if err := os.WriteFile(tmp+"/config.json", []byte(auth.ConfigJSON), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "config.json"), []byte(auth.ConfigJSON), 0o600); err != nil {
 		return err
 	}
-	return d.execCommand(ctx, args)
+	env = []string{"DOCKER_CONFIG=" + tmp}
+	return run(args)
 }
 
-func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string) error {
-	c := exec.CommandContext(ctx, d.dockerCompatibleCommand, append(d.globalArgs, args...)...)
+func (d *dockerCompatibleRuntime) execCommand(ctx context.Context, args []string, insecureRegistry bool, env ...string) error {
+	if insecureRegistry {
+		args = append([]string{"--insecure-registry"}, args...)
+	}
+	c := exec.CommandContext(ctx, d.dockerCompatibleCommand, slices.Concat(d.globalArgs, args)...)
+	if len(env) != 0 {
+		c.Env = append(c.Environ(), env...)
+	}
 	out := bytes.NewBuffer(nil)
 	errOut := bytes.NewBuffer(nil)
 	c.Stdout = out

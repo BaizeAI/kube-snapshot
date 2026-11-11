@@ -16,7 +16,7 @@ jobs:
         go-version: 1.24.6
     - name: golangci-lint
       if: github.event_name == 'pull_request'
-      uses: golangci/golangci-lint-action@v7.0.0
+      uses: golangci/golangci-lint-action@v9.3.0
       with:
         # Pin the golangci-lint v2 release used by this workflow.
         version: v2.15.0
